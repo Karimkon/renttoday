@@ -20,6 +20,9 @@ class SecretaryDashboardController extends Controller
                                 ->sum('amount');
 
     $apartments = Apartment::with('payments', 'tenant')->get();
+    $paidAheadSum = Tenant::where('credit_balance', '>', 0)->sum('credit_balance');
+    $paidAhead = Tenant::where('credit_balance', '>', 0)->count();
+
 
     $totalDue = 0;
     $statusCounts = [
@@ -47,7 +50,7 @@ class SecretaryDashboardController extends Controller
     }
 
     return view('secretary.dashboard', compact(
-        'tenantsCount', 'apartmentsCount', 'paymentsThisMonth', 'totalDue', 'statusCounts'
+        'tenantsCount', 'apartmentsCount', 'paymentsThisMonth', 'totalDue', 'statusCounts', 'paidAhead', 'paidAheadSum',
     ));
 }
 

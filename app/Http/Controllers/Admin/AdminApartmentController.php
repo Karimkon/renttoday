@@ -15,8 +15,10 @@ class AdminApartmentController extends Controller
         $month = $request->month ?? Carbon::now()->format('Y-m');
         $statusFilter = $request->status ?? null;
 
+        // Load apartments with tenant and payments
         $apartments = Apartment::with(['tenant', 'payments'])->get();
 
+        // Transform apartments to include totalPaid, dueAmount, and status
         $apartments->transform(function($apt) use ($month) {
             $apt->totalPaid = $apt->payments->sum('amount');
 
@@ -24,17 +26,31 @@ class AdminApartmentController extends Controller
                 $apt->status = 'empty';
                 $apt->dueAmount = 0;
             } else {
+                // Months since apartment creation
                 $monthsSinceStart = max(1, now()->diffInMonths($apt->created_at->copy()->startOfMonth()) + 1);
-                $apt->dueAmount = ($apt->rent * $monthsSinceStart) - $apt->totalPaid;
 
-                if ($apt->totalPaid >= $apt->rent) $apt->status = 'paid';
-                elseif ($apt->totalPaid > 0) $apt->status = 'partial';
-                else $apt->status = 'unpaid';
+                // Include tenant credit in due calculation
+                $apt->dueAmount = max(0, ($apt->rent * $monthsSinceStart) - $apt->totalPaid - ($apt->tenant->credit_balance ?? 0));
+
+                // Determine status based on payments + credit
+                if ($apt->totalPaid + ($apt->tenant->credit_balance ?? 0) >= $apt->rent) {
+                    $apt->status = 'paid';
+                } elseif ($apt->totalPaid + ($apt->tenant->credit_balance ?? 0) > 0) {
+                    $apt->status = 'partial';
+                } else {
+                    $apt->status = 'unpaid';
+                }
             }
 
             return $apt;
         });
 
+        // Optional: filter by status
+        if ($statusFilter) {
+            $apartments = $apartments->filter(fn($apt) => $apt->status == $statusFilter);
+        }
+
+        // Sort by status order: paid → partial → unpaid → empty
         $statusOrder = ['paid','partial','unpaid','empty'];
         $apartments = $apartments->sortBy(fn($apt) => array_search($apt->status, $statusOrder));
 
@@ -62,7 +78,7 @@ class AdminApartmentController extends Controller
         Apartment::create($data);
 
         return redirect()->route('admin.apartments.index')
-                         ->with('success', 'Apartment added.');
+                         ->with('success', 'Apartment added successfully.');
     }
 
     public function edit(Apartment $apartment)
@@ -86,13 +102,13 @@ class AdminApartmentController extends Controller
         $apartment->update($data);
 
         return redirect()->route('admin.apartments.index')
-                         ->with('success', 'Apartment updated.');
+                         ->with('success', 'Apartment updated successfully.');
     }
 
     public function destroy(Apartment $apartment)
     {
         $apartment->delete();
         return redirect()->route('admin.apartments.index')
-                         ->with('success', 'Apartment removed.');
+                         ->with('success', 'Apartment removed successfully.');
     }
 }

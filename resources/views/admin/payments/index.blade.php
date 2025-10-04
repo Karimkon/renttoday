@@ -1,11 +1,11 @@
 @extends('admin.layouts.app')
-@section('title','Payments')
+@section('title','Payments Dashboard')
 
 @section('content')
 <h3 class="mb-4">💰 Payments Dashboard</h3>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <a href="{{ route('admin.payments.create') }}" class="btn btn-primary">➕ Add Payment</a>
+    <a href="{{ route('admin.payments.create') }}" class="btn btn-primary"><i class="bi bi-plus-circle"></i> Add Payment</a>
     <div class="fw-bold fs-5">Total Collected: UGX {{ number_format($totalCollected) }}</div>
 </div>
 
@@ -30,20 +30,24 @@
             </tr>
         </thead>
         <tbody>
-            @foreach($payments as $p)
+            @foreach($payments as $payment)
             <tr>
-                <td>{{ $p->id }}</td>
-                <td>{{ $p->tenant->name }}</td>
-                <td>{{ $p->apartment?->number ?? 'Unassigned' }}</td>
-                <td>{{ \Carbon\Carbon::parse($p->month)->format('d M, Y') }}</td>
-                <td>{{ number_format($p->amount) }}</td>
-                <td>{{ $p->includes_gym ? 'Yes' : 'No' }}</td>
+                <td>{{ $payment->id }}</td>
+                <td>{{ $payment->tenant->name }}</td>
+                <td>{{ $payment->apartment?->number ?? 'Unassigned' }}</td>
+                <td>{{ \Carbon\Carbon::parse($payment->month)->format('d M, Y') }}</td>
+                <td>{{ number_format($payment->amount) }}</td>
+                <td>{{ $payment->includes_gym ? 'Yes' : 'No' }}</td>
                 <td>
-                    <a href="{{ route('admin.payments.edit', $p) }}" class="btn btn-sm btn-warning">✏️ Edit</a>
-                    <form action="{{ route('admin.payments.destroy', $p) }}" method="POST" style="display:inline-block;">
+                    <a href="{{ route('admin.payments.edit', $payment) }}" class="btn btn-sm btn-warning mb-1">
+                        <i class="bi bi-pencil"></i> Edit
+                    </a>
+                    <form action="{{ route('admin.payments.destroy', $payment) }}" method="POST" class="d-inline">
                         @csrf
                         @method('DELETE')
-                        <button onclick="return confirm('Are you sure?')" class="btn btn-sm btn-danger">🗑 Delete</button>
+                        <button onclick="return confirm('Are you sure?')" class="btn btn-sm btn-danger mb-1">
+                            <i class="bi bi-trash"></i> Delete
+                        </button>
                     </form>
                 </td>
             </tr>

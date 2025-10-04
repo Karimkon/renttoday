@@ -135,18 +135,28 @@
                         {{ number_format($apartment->totalPaid) }}/{{ number_format($apartment->rent) }}
                     </span>
                 </td>
-                <td>
-                    @if($apartment->status != 'empty')
-                        <div class="progress">
-                            <div class="progress-bar bg-{{ $statusColors[$apartment->status] ?? 'secondary' }}" 
-                                role="progressbar" 
-                                style="width: {{ min(100, ($apartment->totalPaid / max(1,$apartment->rent)) * 100) }}%">
-                            </div>
-                        </div>
-                    @else
-                        <span class="text-muted">No tenant</span>
-                    @endif
-                </td>
+         <td>
+    {{-- Show credit if exists --}}
+    @if($apartment->tenant && $apartment->tenant->credit_balance > 0)
+        <span class="badge bg-success mb-1 d-block">
+            + UGX {{ number_format($apartment->tenant->credit_balance) }} credit
+        </span>
+    @endif
+
+    {{-- Show progress bar if apartment is not empty --}}
+    @if($apartment->status != 'empty')
+        <div class="progress">
+            <div class="progress-bar bg-{{ $statusColors[$apartment->status] ?? 'secondary' }}" 
+                role="progressbar" 
+                style="width: {{ min(100, ($apartment->totalPaid / max(1,$apartment->rent)) * 100) }}%">
+            </div>
+        </div>
+    @elseif(!$apartment->tenant)
+        <span class="text-muted">No tenant</span>
+    @endif
+</td>
+
+
                 <td>
                     <a href="{{ route('secretary.payments.create') }}?tenant={{ $apartment->tenant?->id }}" class="btn btn-sm btn-success mb-1">➕ Payment</a>
                     <a href="{{ route('secretary.apartments.edit', $apartment) }}" class="btn btn-sm btn-warning mb-1">✏️ Edit</a>

@@ -29,7 +29,8 @@ class ApartmentController extends Controller
             } else {
                 // months since apartment creation
                 $monthsSinceStart = max(1, now()->diffInMonths($apt->created_at->copy()->startOfMonth()) + 1);
-                $apt->dueAmount = ($apt->rent * $monthsSinceStart) - $apt->totalPaid;
+                $apt->dueAmount = max(0, ($apt->rent * $monthsSinceStart) - $apt->totalPaid - ($apt->tenant->credit_balance ?? 0));
+
 
                 // Status based on totalPaid
                 if($apt->totalPaid >= $apt->rent) $apt->status = 'paid';

@@ -112,6 +112,7 @@ Route::middleware(['auth','role:admin'])->prefix('admin')->name('admin.')->group
     Route::resource('apartments', \App\Http\Controllers\Admin\AdminApartmentController::class);
     Route::resource('inventory', \App\Http\Controllers\Admin\InventoryController::class);
     Route::resource('payments', \App\Http\Controllers\Admin\AdminPaymentController::class);
+    Route::resource('tenants', \App\Http\Controllers\Admin\AdminTenantController::class);
 });
 
 

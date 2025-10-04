@@ -72,7 +72,23 @@
             </div>
         </div>
     </div>
+
+    <div class="col-md-4">
+        <div class="card text-center shadow-sm border-0 bg-primary text-white">
+            <div class="card-body">
+                <h3>{{ $paidAhead }}</h3>
+                <p>Tenants Paid Ahead</p>
+            </div>
+        </div>
+
+    <div class="col-md-4">
+        <div class="card text-center shadow-sm border-0 bg-primary text-white">
+            <div class="card-body">
+                <h3>UGX {{ number_format($paidAheadSum, 0) }}</h3>
+                <p>Total Paid Ahead Amount</p>
+            </div>
+        </div>
+    </div>
 </div>
 
-    </div>
 @endsection

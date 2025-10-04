@@ -117,6 +117,10 @@
            class="{{ request()->routeIs('admin.users.*') ? 'active text-white' : '' }}">
             <i class="bi bi-people"></i> Manage Users
         </a>
+        <a href="{{ route('admin.tenants.index') }}" 
+           class="{{ request()->routeIs('admin.tenants.*') ? 'active text-white' : '' }}">
+            <i class="bi bi-person-lines-fill"></i> Manage Tenants
+        </a>
 
         <a href="{{ route('admin.apartments.index') }}" 
            class="{{ request()->routeIs('admin.apartments.*') ? 'active text-white' : '' }}">
@@ -148,5 +152,9 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+@stack('scripts')
 </body>
 </html>

@@ -26,35 +26,57 @@ class PaymentController extends Controller
     }
 
     public function store(Request $request)
-    {
-        $data = $request->validate([
-            'tenant_id'     => 'required|exists:tenants,id',
-            'month'         => 'required|date_format:Y-m',
-            'amount'        => 'required|numeric',
-            'includes_gym'  => 'nullable|boolean',
-        ]);
+{
+    $data = $request->validate([
+        'tenant_id'     => 'required|exists:tenants,id',
+        'month'         => 'required|date_format:Y-m',
+        'amount'        => 'required|numeric|min:1',
+        'includes_gym'  => 'nullable|boolean',
+    ]);
 
-        $tenant = Tenant::find($data['tenant_id']);
+    $tenant = Tenant::with('apartment')->findOrFail($data['tenant_id']);
+    $apartment = $tenant->apartment;
 
-        // Assign apartment automatically
-        if(!$tenant->apartment) {
-            return back()->with('error', 'Selected tenant is not assigned to any apartment.');
-        }
-
-        $data['apartment_id'] = $tenant->apartment->id;
-
-        // Get tenant billing day (default to 1)
-        $billingDay = $tenant->billing_day ?? 1;
-        $day = str_pad($billingDay, 2, '0', STR_PAD_LEFT);
-
-        // Convert month to full date with billing day
-        $data['month'] = $data['month'] . '-' . $day;
-
-        Payment::create($data);
-
-        return redirect()->route('secretary.payments.index')
-                         ->with('success', 'Payment added successfully.');
+    if (!$apartment) {
+        return back()->with('error', 'This tenant is not assigned to any apartment.');
     }
+
+    $rent = $apartment->rent;
+    $totalAmount = $data['amount'] + ($tenant->credit_balance ?? 0); // Add any existing credit
+
+    // Calculate how many months are covered by this total
+    $monthsCovered = floor($totalAmount / $rent);
+    $remainder = $totalAmount - ($monthsCovered * $rent);
+
+    // Get the starting month
+    $startMonth = Carbon::createFromFormat('Y-m', $data['month']);
+
+    for ($i = 0; $i < $monthsCovered; $i++) {
+        $paymentMonth = $startMonth->copy()->addMonths($i)->format('Y-m');
+        
+        $exists = Payment::where('tenant_id', $tenant->id)
+            ->whereYear('month', substr($paymentMonth, 0, 4))
+            ->whereMonth('month', substr($paymentMonth, 5, 2))
+            ->exists();
+
+        if (!$exists) {
+            Payment::create([
+                'tenant_id' => $tenant->id,
+                'apartment_id' => $apartment->id,
+                'month' => $paymentMonth . '-01',
+                'amount' => $rent,
+                'includes_gym' => $data['includes_gym'] ?? false,
+            ]);
+        }
+    }
+
+    // Update credit balance with leftover money
+    $tenant->update(['credit_balance' => $remainder]);
+
+    return redirect()->route('secretary.payments.index')
+                     ->with('success', "Payment added for {$monthsCovered} month(s). Remaining credit: UGX {$remainder}");
+}
+
 
     public function edit(Payment $payment)
     {

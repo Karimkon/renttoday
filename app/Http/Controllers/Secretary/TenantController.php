@@ -9,7 +9,7 @@ use Illuminate\Http\Request;
 class TenantController extends Controller
 {
     public function index() {
-        $tenants = Tenant::all();
+        $tenants = Tenant::with('apartment')->get();
         return view('secretary.tenants.index', compact('tenants'));
     }
 
