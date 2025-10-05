@@ -80,6 +80,7 @@
                 <p>Tenants Paid Ahead</p>
             </div>
         </div>
+    </div>
 
     <div class="col-md-4">
         <div class="card text-center shadow-sm border-0 bg-primary text-white">
@@ -89,6 +90,7 @@
             </div>
         </div>
     </div>
+
 </div>
 
 @endsection

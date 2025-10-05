@@ -130,4 +130,14 @@ Route::middleware(['auth','role:secretary'])->prefix('secretary')->name('secreta
 
     Route::resource('payments', PaymentController::class);
 
+    // Secretary Invoices
+Route::prefix('invoices')->name('invoices.')->group(function () {
+    Route::get('/', [App\Http\Controllers\Secretary\InvoiceController::class, 'index'])->name('index');          // list invoices
+    Route::get('/create', [App\Http\Controllers\Secretary\InvoiceController::class, 'create'])->name('create'); // show create form
+    Route::post('/store', [App\Http\Controllers\Secretary\InvoiceController::class, 'store'])->name('store');   // save invoice
+    Route::get('/{invoice}', [App\Http\Controllers\Secretary\InvoiceController::class, 'show'])->name('show');   // view invoice
+    Route::get('/{invoice}/pdf', [App\Http\Controllers\Secretary\InvoiceController::class, 'pdf'])->name('pdf'); // download PDF
+    Route::post('/{invoice}/mark-paid', [App\Http\Controllers\Secretary\InvoiceController::class,'markPaid'])->name('markPaid'); // mark paid
+});
+
 });

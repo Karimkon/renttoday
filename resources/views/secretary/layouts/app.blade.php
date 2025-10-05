@@ -26,6 +26,7 @@
         <a href="{{ route('secretary.dashboard') }}" class="{{ request()->routeIs('secretary.dashboard') ? 'active':'' }}"><i class="bi bi-speedometer2 me-2"></i> Dashboard</a>
         <a href="{{ route('secretary.tenants.index') }}" class="{{ request()->routeIs('secretary.tenants.*') ? 'active':'' }}"><i class="bi bi-people-fill me-2"></i> Tenants</a>
         <a href="{{ route('secretary.apartments.index') }}" class="{{ request()->routeIs('secretary.apartments.*') ? 'active':'' }}"><i class="bi bi-building me-2"></i> Apartments</a>
+        <a href="{{ route('secretary.invoices.index') }}" class="{{ request()->routeIs('secretary.invoices.*') ? 'active':'' }}"><i class="bi bi-file-earmark-text me-2"></i> Invoices</a>
         <a href="{{ route('secretary.payments.index') }}" class="{{ request()->routeIs('secretary.payments.*') ? 'active':'' }}"><i class="bi bi-cash-stack me-2"></i> Payments</a>
 
         <form method="POST" action="{{ route('logout') }}" class="mt-3">
