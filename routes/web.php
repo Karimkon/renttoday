@@ -10,6 +10,8 @@ use App\Http\Controllers\Secretary\SecretaryDashboardController;
 use App\Http\Controllers\Secretary\TenantController;
 use App\Http\Controllers\Secretary\ApartmentController;
 use App\Http\Controllers\Secretary\PaymentController;
+use App\Http\Controllers\Tenant\TenantDashboardController;
+
 
 Route::get('/', fn () => view('welcome'));
 
@@ -95,6 +97,25 @@ return back()->with('error', 'Only secretarys can login here.');
 })->name('secretary.login.submit');
 
 
+Route::get('/tenant/login', fn() => view('tenant.auth.login'))->name('tenant.login');
+Route::post('/tenant/login', function(Request $request){
+    $request->validate([
+        'email'=>'required|email',
+        'password'=>'required',
+    ]);
+
+    if(Auth::attempt([
+        'email'=>$request->email,
+        'password'=>$request->password,
+        'role'=>'tenant'
+    ])){
+        $request->session()->regenerate();
+        return redirect()->route('tenant.dashboard');
+    }
+
+    return back()->with('error','Invalid credentials');
+})->name('tenant.login.submit');
+
 // ----------------------
 // Shared logout
 // ----------------------
@@ -128,7 +149,11 @@ Route::middleware(['auth','role:secretary'])->prefix('secretary')->name('secreta
     // Apartments CRUD
     Route::resource('apartments', ApartmentController::class);
 
+    Route::get('payments/export', [PaymentController::class, 'export'])->name('payments.export');
+
     Route::resource('payments', PaymentController::class);
+
+    
 
     // Secretary Invoices
 Route::prefix('invoices')->name('invoices.')->group(function () {
@@ -138,6 +163,21 @@ Route::prefix('invoices')->name('invoices.')->group(function () {
     Route::get('/{invoice}', [App\Http\Controllers\Secretary\InvoiceController::class, 'show'])->name('show');   // view invoice
     Route::get('/{invoice}/pdf', [App\Http\Controllers\Secretary\InvoiceController::class, 'pdf'])->name('pdf'); // download PDF
     Route::post('/{invoice}/mark-paid', [App\Http\Controllers\Secretary\InvoiceController::class,'markPaid'])->name('markPaid'); // mark paid
-});
+    Route::delete('/{invoice}', [App\Http\Controllers\Secretary\InvoiceController::class, 'destroy'])->name('destroy');
 
 });
+
+
+});
+
+Route::middleware(['auth','role:tenant'])->prefix('tenant')->name('tenant.')->group(function(){
+    Route::get('/dashboard', [TenantDashboardController::class, 'index'])->name('dashboard');
+    // Tenant payments
+    Route::get('/payments', [App\Http\Controllers\Tenant\TenantPaymentController::class, 'index'])->name('payments.index');
+    Route::match(['GET','POST'], '/payments/{payment}/pay', [App\Http\Controllers\Tenant\TenantPaymentController::class, 'pay'])
+    ->name('payments.pay');
+
+    Route::match(['GET','POST'], '/payments/callback', [App\Http\Controllers\Tenant\TenantPaymentController::class, 'callback'])
+        ->name('payments.callback');
+});
+

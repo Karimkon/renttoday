@@ -10,6 +10,7 @@ use App\Models\Apartment;
 use PDF;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\PaymentReceived;
+use App\Mail\InvoicePaid;
 
 class InvoiceController extends Controller
 {
@@ -60,11 +61,23 @@ class InvoiceController extends Controller
 
     // Mark as Paid
     public function markPaid(Invoice $invoice) {
-        $invoice->status = 'paid';
-        $invoice->save();
+    // 1️⃣ Mark as paid
+    $invoice->status = 'paid';
+    $invoice->save();
 
-        Mail::to($invoice->tenant->email)->send(new PaymentReceived($invoice));
+    // 2️⃣ Generate PDF
+    $pdf = PDF::loadView('secretary.invoices.pdf', ['invoice' => $invoice]);
+    $pdfPath = storage_path('app/public/invoices/invoice_'.$invoice->id.'.pdf');
+    $pdf->save($pdfPath); // save temporarily
 
-        return redirect()->back()->with('success','Invoice marked as paid & email sent');
+    // 3️⃣ Send email
+    Mail::to($invoice->tenant->email)->send(new InvoicePaid($invoice));
+
+    return redirect()->back()->with('success','Invoice marked as paid & email sent');
+}
+    // Delete invoice
+    public function destroy(Invoice $invoice) {
+        $invoice->delete();
+        return redirect()->route('secretary.invoices.index')->with('success', 'Invoice deleted successfully.');
     }
 }

@@ -5,6 +5,11 @@ namespace App\Http\Controllers\Secretary;
 use App\Http\Controllers\Controller;
 use App\Models\Tenant;
 use Illuminate\Http\Request;
+use App\Models\User;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Hash;
+
 
 class TenantController extends Controller
 {
@@ -17,15 +22,41 @@ class TenantController extends Controller
         return view('secretary.tenants.create');
     }
 
-    public function store(Request $request) {
-        $request->validate([
-            'name'=>'required',
-            'email'=>'required|email|unique:tenants',
-            'phone'=>'nullable'
-        ]);
-        Tenant::create($request->all());
-        return redirect()->route('secretary.tenants.index')->with('success','Tenant added.');
+  public function store(Request $request) {
+    $request->validate([
+        'name'=>'required',
+        'email'=>'required|email|unique:tenants',
+        'phone'=>'nullable'
+    ]);
+
+    // Create tenant
+    $tenant = Tenant::create($request->all());
+
+    // Generate a temporary password
+    $plainPassword = Str::random(8);
+
+    // Create user (hash password)
+    $user = User::firstOrCreate(
+        ['email' => $tenant->email],
+        [
+            'name' => $tenant->name,
+            'password' => Hash::make($plainPassword),
+            'role' => 'tenant'
+        ]
+    );
+
+    // Link tenant to user
+    $tenant->update(['user_id' => $user->id]);
+
+    // Send email with the real password if newly created
+    if ($user->wasRecentlyCreated) {
+        Mail::to($tenant->email)->send(new \App\Mail\TenantWelcomeMail($tenant, $plainPassword));
     }
+
+    return redirect()->route('secretary.tenants.index')
+                     ->with('success','Tenant added with login access.');
+}
+
 
     public function edit(Tenant $tenant) {
         return view('secretary.tenants.edit', compact('tenant'));

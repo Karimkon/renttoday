@@ -11,13 +11,29 @@ use Carbon\Carbon;
 
 class PaymentController extends Controller
 {
-    public function index()
-    {
-        // Load all payments with tenant and apartment
-        $payments = Payment::with(['tenant', 'apartment'])->orderBy('month', 'desc')->get();
+    public function index(Request $request)
+{
+    $query = Payment::with(['tenant', 'apartment']);
 
-        return view('secretary.payments.index', compact('payments'));
+    // Filters
+    if ($request->filled('tenant_id')) {
+        $query->where('tenant_id', $request->tenant_id);
     }
+
+    if ($request->filled('from_month')) {
+        $query->where('month', '>=', Carbon::createFromFormat('Y-m', $request->from_month)->startOfMonth());
+    }
+
+    if ($request->filled('to_month')) {
+        $query->where('month', '<=', Carbon::createFromFormat('Y-m', $request->to_month)->endOfMonth());
+    }
+
+    $payments = $query->orderBy('month', 'desc')->get();
+    $tenants = Tenant::all();
+
+    return view('secretary.payments.index', compact('payments', 'tenants'));
+}
+
 
     public function create()
     {
@@ -110,6 +126,22 @@ class PaymentController extends Controller
         return redirect()->route('secretary.payments.index')
                          ->with('success', 'Payment updated successfully.');
     }
+
+    public function export(Request $request)
+{
+    $format = $request->format ?? 'excel'; // default to Excel
+
+    // You can pass current filters to the export class
+    $filters = $request->only(['tenant_id', 'status', 'month']);
+
+    if($format === 'pdf'){
+        $payments = Payment::with(['tenant', 'apartment'])->filter($filters)->get(); // you can create a scope filter()
+        $pdf = \PDF::loadView('secretary.payments.export_pdf', compact('payments'));
+        return $pdf->download('payments.pdf');
+    }
+
+    return Excel::download(new PaymentsExport($filters), 'payments.xlsx');
+}
 
     public function destroy(Payment $payment)
     {

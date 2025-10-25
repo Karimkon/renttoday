@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Secretary Login - Apartments ERP</title>
+    <title>Tenant Login - Apartments ERP</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
     <!-- Bootstrap 5 -->
@@ -21,7 +21,6 @@
             position: relative;
         }
 
-        /* floating orb background */
         .animated-orb {
             position: absolute;
             width: 250px;
@@ -47,7 +46,6 @@
             100% {background:radial-gradient(circle,#0d6efd,#6610f2,#e83e8c)}
         }
 
-        /* login box */
         .login-container {
             max-width: 440px;
             margin: auto;
@@ -61,7 +59,6 @@
             animation: slideUp 0.7s ease-out;
         }
 
-        /* logo */
         .login-logo {
             width: 110px;
             height: 110px;
@@ -88,7 +85,6 @@
             transform: translateY(-2px);
         }
 
-        /* animations */
         @keyframes pulse {
             0%,100% {transform:scale(1)}
             50%     {transform:scale(1.05)}
@@ -116,14 +112,14 @@
     <div class="login-container">
         <div class="text-center mb-4">
             <img src="{{ asset('images/apartments.jpg') }}" alt="Apartments Logo" class="login-logo mb-2">
-            <h4 class="login-title">Secretary Login</h4>
+            <h4 class="login-title">Tenant Login</h4>
         </div>
 
         @if(session('error'))
             <div class="alert alert-danger">{{ session('error') }}</div>
         @endif
 
-        <form method="POST" action="{{ route('secretary.login.submit') }}">
+        <form method="POST" action="{{ route('tenant.login.submit') }}">
             @csrf
             <div class="mb-3">
                 <label class="form-label">Email</label>
@@ -141,12 +137,11 @@
         </form>
 
         <div class="text-center mt-4">
-            <small class="text-muted">© {{ date('Y') }} Hotel ERP. All rights reserved.</small>
+            <small class="text-muted">© {{ date('Y') }} Apartments ERP. All rights reserved.</small>
         </div>
     </div>
 </div>
 
-<!-- Bootstrap JS (optional) -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

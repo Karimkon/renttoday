@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>@yield('title','PhilWil Apartments - Secretary')</title>
+    <title>@yield('title','PhilWil Apartments - Tenant')</title>
 
     <!-- Bootstrap -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -154,24 +154,21 @@
     <div class="sidebar">
         <div>
             <div class="sidebar-header">
-                <h4><i class="bi bi-person-badge"></i> Secretary</h4>
+                <h4><i class="bi bi-person-badge"></i> Tenant</h4>
             </div>
             <div class="sidebar-nav">
-                <a href="{{ route('secretary.dashboard') }}" class="{{ request()->routeIs('secretary.dashboard') ? 'active':'' }}">
+                <a href="{{ route('tenant.dashboard') }}" class="{{ request()->routeIs('tenant.dashboard') ? 'active':'' }}">
                     <i class="bi bi-speedometer2"></i> Dashboard
                 </a>
-                <a href="{{ route('secretary.tenants.index') }}" class="{{ request()->routeIs('secretary.tenants.*') ? 'active':'' }}">
-                    <i class="bi bi-people-fill"></i> Tenants
-                </a>
-                <a href="{{ route('secretary.apartments.index') }}" class="{{ request()->routeIs('secretary.apartments.*') ? 'active':'' }}">
-                    <i class="bi bi-building"></i> Apartments
-                </a>
-                <a href="{{ route('secretary.invoices.index') }}" class="{{ request()->routeIs('secretary.invoices.*') ? 'active':'' }}">
-                    <i class="bi bi-file-earmark-text"></i> Invoices
-                </a>
-                <a href="{{ route('secretary.payments.index') }}" class="{{ request()->routeIs('secretary.payments.*') ? 'active':'' }}">
-                    <i class="bi bi-cash-stack"></i> Payments
-                </a>
+                @php
+                    $tenant = auth()->user()->tenant;
+                @endphp
+
+                @if($tenant && $tenant->apartment)
+                    <a href="{{ route('tenant.payments.index') }}" class="{{ request()->routeIs('tenant.payments.*') ? 'active':'' }}">
+                        <i class="bi bi-wallet2"></i> Payments
+                    </a>
+                @endif
             </div>
         </div>
 
