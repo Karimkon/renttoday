@@ -11,6 +11,9 @@ use App\Http\Controllers\Secretary\TenantController;
 use App\Http\Controllers\Secretary\ApartmentController;
 use App\Http\Controllers\Secretary\PaymentController;
 use App\Http\Controllers\Tenant\TenantDashboardController;
+use App\Http\Controllers\Admin\AdminPaymentController;
+use App\Http\Controllers\Admin\FinancialReportController;
+use App\Http\Controllers\Admin\LandlordController;
 
 
 Route::get('/', fn () => view('welcome'));
@@ -132,8 +135,47 @@ Route::middleware(['auth','role:admin'])->prefix('admin')->name('admin.')->group
     Route::resource('users', App\Http\Controllers\Admin\AdminUserController::class);
     Route::resource('apartments', \App\Http\Controllers\Admin\AdminApartmentController::class);
     Route::resource('inventory', \App\Http\Controllers\Admin\InventoryController::class);
-    Route::resource('payments', \App\Http\Controllers\Admin\AdminPaymentController::class);
     Route::resource('tenants', \App\Http\Controllers\Admin\AdminTenantController::class);
+    Route::resource('expenses', \App\Http\Controllers\Admin\ExpenseController::class);
+
+    // Add to admin routes
+Route::prefix('payments')->name('payments.')->group(function () {
+    Route::get('/', [AdminPaymentController::class, 'index'])->name('index');
+    Route::get('/create', [AdminPaymentController::class, 'create'])->name('create');
+    Route::post('/', [AdminPaymentController::class, 'store'])->name('store');
+    Route::get('/{payment}', [AdminPaymentController::class, 'show'])->name('show');
+    Route::get('/{payment}/edit', [AdminPaymentController::class, 'edit'])->name('edit');
+    Route::put('/{payment}', [AdminPaymentController::class, 'update'])->name('update');
+    Route::delete('/{payment}', [AdminPaymentController::class, 'destroy'])->name('destroy');
+    Route::post('/{payment}/mark-paid', [AdminPaymentController::class, 'markAsPaid'])->name('mark-paid');
+    Route::get('/pesapal/callback', [AdminPaymentController::class, 'pesapalCallback'])->name('pesapal-callback');
+});
+
+    // Landlords 
+    Route::resource('landlords', \App\Http\Controllers\Admin\LandlordController::class);
+    Route::get('landlords/{landlord}/monthly-report/{month?}', [LandlordController::class, 'showReport'])
+         ->name('landlords.monthly-report');
+    Route::get('landlords/{landlord}/report/pdf/{month?}', [LandlordController::class, 'generatePdfReport'])
+        ->name('landlords.report.pdf');
+
+
+    // Financial Reports
+Route::prefix('financial-reports')->name('financial-reports.')->group(function () {
+    Route::get('/', [FinancialReportController::class, 'index'])->name('index');
+    Route::get('/income-statement', [FinancialReportController::class, 'incomeStatement'])->name('income-statement');
+    Route::get('/balance-sheet', [FinancialReportController::class, 'balanceSheet'])->name('balance-sheet');
+    Route::get('/profit-loss', [FinancialReportController::class, 'profitAndLoss'])->name('profit-loss');
+    
+    // Expense Management
+    Route::get('/expenses', [FinancialReportController::class, 'expenses'])->name('expenses');
+    Route::get('/expenses/create', [FinancialReportController::class, 'createExpense'])->name('expenses.create');
+    Route::post('/expenses', [FinancialReportController::class, 'storeExpense'])->name('expenses.store');
+    Route::get('/expenses/{expense}/edit', [FinancialReportController::class, 'editExpense'])->name('expenses.edit');
+    Route::put('/expenses/{expense}', [FinancialReportController::class, 'updateExpense'])->name('expenses.update');
+    Route::delete('/expenses/{expense}', [FinancialReportController::class, 'destroyExpense'])->name('expenses.destroy');
+});
+
+
 });
 
 
@@ -180,4 +222,9 @@ Route::middleware(['auth','role:tenant'])->prefix('tenant')->name('tenant.')->gr
     Route::match(['GET','POST'], '/payments/callback', [App\Http\Controllers\Tenant\TenantPaymentController::class, 'callback'])
         ->name('payments.callback');
 });
+
+// Add this route - it redirects to your main page which has login buttons
+Route::get('/login', function () {
+    return redirect('/');
+})->name('login');
 

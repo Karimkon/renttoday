@@ -69,6 +69,26 @@
 
     <form action="{{ route('admin.apartments.index') }}" method="GET" class="d-flex gap-2">
         <input type="month" name="month" value="{{ $month }}" class="form-control" />
+
+        {{-- Add to the filter form --}}
+<select name="landlord_id" class="form-select">
+    <option value="">All Landlords</option>
+    @foreach($landlords as $landlord)
+        <option value="{{ $landlord->id }}" {{ ($landlordFilter==$landlord->id)?'selected':'' }}>
+            {{ $landlord->name }}
+        </option>
+    @endforeach
+</select>
+
+<select name="location" class="form-select">
+    <option value="">All Locations</option>
+    @foreach($locations as $loc)
+        <option value="{{ $loc }}" {{ ($locationFilter==$loc)?'selected':'' }}>
+            {{ $loc }}
+        </option>
+    @endforeach
+</select>
+
         <select name="status" class="form-select">
             <option value="">All Status</option>
             @foreach(['paid','partial','unpaid','empty'] as $status)
@@ -90,6 +110,7 @@
             <tr>
                 <th>#</th>
                 <th>Number</th>
+                <th>Land Lord</th>
                 <th>Rooms</th>
                 <th>Rent</th>
                 <th>Tenant</th>
@@ -105,6 +126,14 @@
             <tr>
                 <td>{{ $apartment->id }}</td>
                 <td>{{ $apartment->number }}</td>
+                <td>
+            @if($apartment->landlord)
+                <span class="badge bg-primary">{{ $apartment->landlord->name }}</span>
+                <small class="text-muted d-block">{{ $apartment->landlord->commission_rate }}% commission</small>
+            @else
+                <span class="badge bg-secondary">No Landlord</span>
+            @endif
+        </td>
                 <td>{{ $apartment->rooms }}</td>
                 <td>{{ number_format($apartment->rent) }}</td>
                 <td>{{ $apartment->tenant?->name ?? 'Unassigned' }}</td>

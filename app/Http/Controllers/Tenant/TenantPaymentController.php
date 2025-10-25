@@ -1,108 +1,124 @@
 <?php
+// app/Http/Controllers/Tenant/TenantPaymentController.php
 
 namespace App\Http\Controllers\Tenant;
 
 use App\Http\Controllers\Controller;
-use App\Models\Payment;
-use App\Services\PesapalService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
-use Carbon\Carbon;
+use App\Models\Payment;
+use App\Models\LatePaymentFee;
+use App\Services\PesapalService;
 
 class TenantPaymentController extends Controller
 {
-    protected $pesapal;
+    protected $pesapalService;
 
-    public function __construct(PesapalService $pesapal)
+    public function __construct(PesapalService $pesapalService)
     {
-        $this->pesapal = $pesapal;
+        $this->pesapalService = $pesapalService;
     }
 
-    // List tenant payments
-    public function index()
+    public function pay(Request $request, Payment $payment)
     {
         $tenant = auth()->user()->tenant;
-        $payments = Payment::where('tenant_id', $tenant->id)->orderBy('month', 'desc')->get();
+        $apartment = $tenant->apartment;
+        
+        if (!$apartment) {
+            return back()->with('error', 'No apartment assigned.');
+        }
 
-        return view('tenant.payments.index', compact('payments'));
-    }
+        // Calculate total amount including late fees
+        $baseAmount = $payment->amount ?? $apartment->rent;
+        $lateFees = LatePaymentFee::where('tenant_id', $tenant->id)
+            ->unpaid()
+            ->sum('amount');
 
-    // Initiate payment
-  public function pay($paymentId, Request $request)
-{
-    $tenant = auth()->user()->tenant;
+        $totalAmount = $baseAmount + $lateFees;
 
-    if ($paymentId == 0) {
-        $payment = Payment::create([
-            'tenant_id' => $tenant->id,
-            'month' => $request->month ?? now()->format('Y-m-d'),
-            'amount' => $request->amount ?? $tenant->apartment->rent,
-            'status' => 'unpaid',
+        $orderData = [
+            'id' => uniqid(),
+            'currency' => 'UGX',
+            'amount' => $totalAmount,
+            'description' => "Rent Payment + Late Fees - {$apartment->number}",
+            'callback_url' => route('tenant.payments.callback'),
+            'notification_id' => config('pesapal.notification_id'),
+            'billing_address' => [
+                'email_address' => $tenant->email,
+                'phone_number' => $tenant->phone,
+                'country_code' => 'UG'
+            ]
+        ];
+
+        // Store payment intent in session
+        session([
+            'payment_intent' => [
+                'apartment_id' => $apartment->id,
+                'tenant_id' => $tenant->id,
+                'base_amount' => $baseAmount,
+                'late_fees' => $lateFees,
+                'total_amount' => $totalAmount,
+                'month' => $payment->month ?? now()->format('Y-m')
+            ]
         ]);
-    } else {
-        $payment = Payment::findOrFail($paymentId);
+
+        $response = $this->pesapalService->submitOrder($orderData);
+
+        if (isset($response['redirect_url'])) {
+            return redirect($response['redirect_url']);
+        }
+
+        return back()->with('error', 'Payment initiation failed.');
     }
 
-    // Pesapal requires merchant_reference, currency, and customer info
-    $orderData = [
-        'amount' => $payment->amount,
-        'currency' => 'UGX',
-        'description' => "Rent Payment for " . \Carbon\Carbon::parse($payment->month)->format('F Y'),
-        'callback_url' => route('tenant.payments.callback'),
-        'notification_id' => config('services.pesapal.notification_id') ?? null, // optional
-        'billing_address' => [
-            'email_address' => $tenant->email,
-            'phone_number' => $tenant->phone ?? '',
-            'country_code' => 'UG',
-            'first_name' => $tenant->name,
-            'last_name' => '',
-            'line_1' => 'Apartment Rent Payment',
-            'line_2' => '',
-            'city' => 'Kampala',
-            'state' => 'Central',
-            'postal_code' => ''
-        ],
-        'merchant_reference' => (string) Str::uuid(),
-    ];
-
-    \Log::info('Pesapal Request Payload:', $orderData);
-
-    $response = $this->pesapal->submitOrder($orderData);
-
-    \Log::info('Pesapal raw response:', ['response' => $response]);
-
-    $redirectUrl = $response['redirect_url'] ?? null;
-
-    if (!$redirectUrl) {
-        \Log::error('Pesapal response missing redirect_url', ['response' => $response]);
-        return back()->with('error', 'Payment initiation failed. Please try again.');
-    }
-
-    return redirect()->away($redirectUrl);
-}
-
-
-
-    // Handle Pesapal callback
     public function callback(Request $request)
     {
-        $transactionId = $request->get('transaction_id');
-        $reference = $request->get('reference');
+        $paymentIntent = session('payment_intent');
+        
+        if (!$paymentIntent) {
+            return redirect()->route('tenant.payments.index')
+                ->with('error', 'Payment session expired.');
+        }
 
-        $status = $this->pesapal->getTransactionStatus($reference);
+        $orderTrackingId = $request->input('OrderTrackingId');
+        $status = $this->pesapalService->getTransactionStatus($orderTrackingId);
 
-        if ($status && $status['status'] === 'COMPLETED') {
-            $payment = Payment::where('transaction_id', $reference)->first();
-            if ($payment) {
-                $payment->update([
-                    'status' => 'paid',
-                    'paid_at' => Carbon::now(),
-                    'transaction_id' => $transactionId,
-                ]);
-            }
+        if ($status && $status['status_code'] == 1) {
+            // Payment successful
+            $this->processSuccessfulPayment($paymentIntent, $orderTrackingId);
+            
+            return redirect()->route('tenant.payments.index')
+                ->with('success', 'Payment completed successfully! Late fees cleared.');
         }
 
         return redirect()->route('tenant.payments.index')
-                         ->with('success', 'Payment status updated.');
+            ->with('error', 'Payment was not completed.');
+    }
+
+    private function processSuccessfulPayment($paymentIntent, $orderTrackingId)
+    {
+        // Create or update main payment
+        $payment = Payment::updateOrCreate(
+            [
+                'apartment_id' => $paymentIntent['apartment_id'],
+                'tenant_id' => $paymentIntent['tenant_id'],
+                'month' => $paymentIntent['month']
+            ],
+            [
+                'amount' => $paymentIntent['base_amount'],
+                'status' => 'paid',
+                'paid_at' => now(),
+                'order_tracking_id' => $orderTrackingId
+            ]
+        );
+
+        // Mark late fees as paid
+        if ($paymentIntent['late_fees'] > 0) {
+            LatePaymentFee::where('tenant_id', $paymentIntent['tenant_id'])
+                ->unpaid()
+                ->update(['status' => 'paid', 'paid_at' => now()]);
+        }
+
+        // Clear session
+        session()->forget('payment_intent');
     }
 }

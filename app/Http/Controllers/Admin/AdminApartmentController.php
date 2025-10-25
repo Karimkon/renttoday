@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Apartment;
 use App\Models\Tenant;
+use App\Models\Landlord;
 use Carbon\Carbon;
 
 class AdminApartmentController extends Controller
@@ -14,28 +15,52 @@ class AdminApartmentController extends Controller
     {
         $month = $request->month ?? Carbon::now()->format('Y-m');
         $statusFilter = $request->status ?? null;
+        $landlordFilter = $request->landlord_id ?? null;
+        $locationFilter = $request->location ?? null;
 
-        // Load apartments with tenant and payments
-        $apartments = Apartment::with(['tenant', 'payments'])->get();
+        // Build base query with relationships
+        $query = Apartment::with(['tenant', 'payments', 'landlord']);
 
-        // Transform apartments to include totalPaid, dueAmount, and status
-        $apartments->transform(function($apt) use ($month) {
-            $apt->totalPaid = $apt->payments->sum('amount');
+        // Apply filters
+        if ($landlordFilter) {
+            $query->where('landlord_id', $landlordFilter);
+        }
+
+        if ($locationFilter) {
+            $query->where('location', $locationFilter);
+        }
+
+        // Fetch apartments
+        $apartments = $query->get();
+        $landlords = Landlord::all();
+        $locations = Apartment::distinct()->pluck('location');
+
+        // Transform apartments to calculate rent data
+        $apartments->transform(function ($apt) use ($month) {
+            $startOfMonth = Carbon::parse($month)->startOfMonth();
+            $endOfMonth = Carbon::parse($month)->endOfMonth();
+
+            // Sum of payments for the selected month
+            $apt->totalPaid = $apt->payments()
+                ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
+                ->sum('amount');
 
             if (!$apt->tenant) {
                 $apt->status = 'empty';
                 $apt->dueAmount = 0;
             } else {
-                // Months since apartment creation
+                // Calculate months since apartment was created
                 $monthsSinceStart = max(1, now()->diffInMonths($apt->created_at->copy()->startOfMonth()) + 1);
 
                 // Include tenant credit in due calculation
-                $apt->dueAmount = max(0, ($apt->rent * $monthsSinceStart) - $apt->totalPaid - ($apt->tenant->credit_balance ?? 0));
+                $credit = $apt->tenant->credit_balance ?? 0;
+                $apt->dueAmount = max(0, ($apt->rent * $monthsSinceStart) - $apt->totalPaid - $credit);
 
-                // Determine status based on payments + credit
-                if ($apt->totalPaid + ($apt->tenant->credit_balance ?? 0) >= $apt->rent) {
+                // Determine payment status
+                $totalAvailable = $apt->totalPaid + $credit;
+                if ($totalAvailable >= $apt->rent) {
                     $apt->status = 'paid';
-                } elseif ($apt->totalPaid + ($apt->tenant->credit_balance ?? 0) > 0) {
+                } elseif ($totalAvailable > 0) {
                     $apt->status = 'partial';
                 } else {
                     $apt->status = 'unpaid';
@@ -45,22 +70,31 @@ class AdminApartmentController extends Controller
             return $apt;
         });
 
-        // Optional: filter by status
+        // Apply status filter after transformation
         if ($statusFilter) {
-            $apartments = $apartments->filter(fn($apt) => $apt->status == $statusFilter);
+            $apartments = $apartments->filter(fn($apt) => $apt->status === $statusFilter);
         }
 
-        // Sort by status order: paid → partial → unpaid → empty
-        $statusOrder = ['paid','partial','unpaid','empty'];
-        $apartments = $apartments->sortBy(fn($apt) => array_search($apt->status, $statusOrder));
+        // Sort by logical payment status order
+        $statusOrder = ['paid', 'partial', 'unpaid', 'empty'];
+        $apartments = $apartments->sortBy(fn($apt) => array_search($apt->status, $statusOrder))->values();
 
-        return view('admin.apartments.index', compact('apartments','month','statusFilter'));
+        return view('admin.apartments.index', compact(
+            'apartments',
+            'month',
+            'statusFilter',
+            'landlords',
+            'landlordFilter',
+            'locations',
+            'locationFilter'
+        ));
     }
 
     public function create()
     {
         $tenants = Tenant::all();
-        return view('admin.apartments.create', compact('tenants'));
+        $landlords = Landlord::all();
+        return view('admin.apartments.create', compact('tenants', 'landlords'));
     }
 
     public function store(Request $request)
@@ -70,12 +104,11 @@ class AdminApartmentController extends Controller
             'rooms' => 'required|integer|min:1',
             'rent' => 'required|numeric',
             'tenant_id' => 'nullable|exists:tenants,id',
+            'landlord_id' => 'required|exists:landlords,id',
+            'location' => 'required|string|max:255',
         ]);
 
-        $data = $request->all();
-        $data['tenant_id'] = $data['tenant_id'] ?: null;
-
-        Apartment::create($data);
+        Apartment::create($request->all());
 
         return redirect()->route('admin.apartments.index')
                          ->with('success', 'Apartment added successfully.');
@@ -84,22 +117,22 @@ class AdminApartmentController extends Controller
     public function edit(Apartment $apartment)
     {
         $tenants = Tenant::all();
-        return view('admin.apartments.edit', compact('apartment', 'tenants'));
+        $landlords = Landlord::all();
+        return view('admin.apartments.edit', compact('apartment', 'tenants', 'landlords'));
     }
 
     public function update(Request $request, Apartment $apartment)
     {
         $request->validate([
-            'number' => 'required|unique:apartments,number,'.$apartment->id,
+            'number' => 'required|unique:apartments,number,' . $apartment->id,
             'rooms' => 'required|integer|min:1',
             'rent' => 'required|numeric',
             'tenant_id' => 'nullable|exists:tenants,id',
+            'landlord_id' => 'required|exists:landlords,id',
+            'location' => 'required|string|max:255',
         ]);
 
-        $data = $request->all();
-        $data['tenant_id'] = $data['tenant_id'] ?: null;
-
-        $apartment->update($data);
+        $apartment->update($request->all());
 
         return redirect()->route('admin.apartments.index')
                          ->with('success', 'Apartment updated successfully.');
@@ -108,6 +141,7 @@ class AdminApartmentController extends Controller
     public function destroy(Apartment $apartment)
     {
         $apartment->delete();
+
         return redirect()->route('admin.apartments.index')
                          ->with('success', 'Apartment removed successfully.');
     }

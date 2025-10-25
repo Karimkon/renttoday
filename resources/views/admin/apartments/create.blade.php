@@ -8,6 +8,26 @@
 
 <form action="{{ route('admin.apartments.store') }}" method="POST">
     @csrf
+
+    {{-- Add landlord and location fields --}}
+<div class="mb-3">
+    <label class="form-label">Landlord <span class="text-danger">*</span></label>
+    <select name="landlord_id" class="form-select" required>
+        <option value="">-- Select Landlord --</option>
+        @foreach($landlords as $landlord)
+            <option value="{{ $landlord->id }}" {{ old('landlord_id')==$landlord->id?'selected':'' }}>
+                {{ $landlord->name }} ({{ $landlord->commission_rate }}% commission)
+            </option>
+        @endforeach
+    </select>
+</div>
+
+<div class="mb-3">
+    <label class="form-label">Location <span class="text-danger">*</span></label>
+    <input type="text" name="location" class="form-control" value="{{ old('location') }}" 
+           placeholder="e.g., Mukono, Bweyogerere, etc." required>
+</div>
+
     <div class="mb-3">
         <label class="form-label">Number</label>
         <input type="text" name="number" class="form-control" value="{{ old('number') }}" required>

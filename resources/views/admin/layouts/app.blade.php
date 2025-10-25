@@ -117,6 +117,13 @@
            class="{{ request()->routeIs('admin.users.*') ? 'active text-white' : '' }}">
             <i class="bi bi-people"></i> Manage Users
         </a>
+
+        <!-- Add these links to your admin sidebar -->
+        <a href="{{ route('admin.landlords.index') }}" 
+        class="{{ request()->routeIs('admin.landlords.*') ? 'active text-white' : '' }}">
+            <i class="bi bi-person-badge"></i> Manage Landlords
+        </a>
+
         <a href="{{ route('admin.tenants.index') }}" 
            class="{{ request()->routeIs('admin.tenants.*') ? 'active text-white' : '' }}">
             <i class="bi bi-person-lines-fill"></i> Manage Tenants
@@ -135,6 +142,16 @@
         <a href="{{ route('admin.payments.index') }}" 
            class="{{ request()->routeIs('admin.payments.*') ? 'active text-white' : '' }}">
             <i class="bi bi-credit-card"></i> Payments
+        </a>
+
+        <a href="{{ route('admin.expenses.index') }}" 
+        class="{{ request()->routeIs('admin.expenses.*') ? 'active text-white' : '' }}">
+            <i class="bi bi-cash-coin"></i> Manage Expenses
+        </a>
+
+        <a href="{{ route('admin.financial-reports.index') }}" 
+        class="{{ request()->routeIs('admin.financial-reports.*') ? 'active text-white' : '' }}">
+            <i class="bi bi-graph-up"></i> Financial Reports
         </a>
 
     
