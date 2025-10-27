@@ -64,39 +64,149 @@
 </div>
 
 {{-- Filter Form --}}
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <a href="{{ route('admin.apartments.create') }}" class="btn btn-primary">➕ Add Apartment</a>
+{{-- Advanced Filter Form --}}
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-white">
+        <h6 class="mb-0"><i class="bi bi-funnel"></i> Advanced Filters</h6>
+    </div>
+    <div class="card-body">
+        <form action="{{ route('admin.apartments.index') }}" method="GET" class="row g-3 align-items-end">
+            {{-- Basic Filters --}}
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Month</label>
+                <input type="month" name="month" value="{{ $month }}" class="form-control">
+            </div>
 
-    <form action="{{ route('admin.apartments.index') }}" method="GET" class="d-flex gap-2">
-        <input type="month" name="month" value="{{ $month }}" class="form-control" />
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Landlord</label>
+                <select name="landlord_id" class="form-select select2-landlord">
+                    <option value="">All Landlords</option>
+                    @foreach($landlords as $landlord)
+                        <option value="{{ $landlord->id }}" {{ ($landlordFilter==$landlord->id)?'selected':'' }}>
+                            {{ $landlord->name }}
+                        </option>
+                    @endforeach
+                </select>
+            </div>
 
-        {{-- Add to the filter form --}}
-<select name="landlord_id" class="form-select">
-    <option value="">All Landlords</option>
-    @foreach($landlords as $landlord)
-        <option value="{{ $landlord->id }}" {{ ($landlordFilter==$landlord->id)?'selected':'' }}>
-            {{ $landlord->name }}
-        </option>
-    @endforeach
-</select>
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Location</label>
+                <select name="location" class="form-select select2-location">
+                    <option value="">All Locations</option>
+                    @foreach($locations as $loc)
+                        <option value="{{ $loc }}" {{ ($locationFilter==$loc)?'selected':'' }}>
+                            {{ $loc }}
+                        </option>
+                    @endforeach
+                </select>
+            </div>
 
-<select name="location" class="form-select">
-    <option value="">All Locations</option>
-    @foreach($locations as $loc)
-        <option value="{{ $loc }}" {{ ($locationFilter==$loc)?'selected':'' }}>
-            {{ $loc }}
-        </option>
-    @endforeach
-</select>
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Status</label>
+                <select name="status" class="form-select">
+                    <option value="">All Status</option>
+                    @foreach(['paid','partial','unpaid','empty'] as $status)
+                        <option value="{{ $status }}" {{ ($statusFilter==$status)?'selected':'' }}>
+                            {{ ucfirst($status) }}
+                        </option>
+                    @endforeach
+                </select>
+            </div>
 
-        <select name="status" class="form-select">
-            <option value="">All Status</option>
-            @foreach(['paid','partial','unpaid','empty'] as $status)
-                <option value="{{ $status }}" {{ ($statusFilter==$status)?'selected':'' }}>{{ ucfirst($status) }}</option>
-            @endforeach
-        </select>
-        <button type="submit" class="btn btn-success">Filter</button>
-    </form>
+            {{-- Advanced Filters --}}
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Rent Range</label>
+                <div class="input-group">
+                    <input type="number" name="rent_min" class="form-control" placeholder="Min" 
+                           value="{{ request('rent_min') }}">
+                    <input type="number" name="rent_max" class="form-control" placeholder="Max" 
+                           value="{{ request('rent_max') }}">
+                </div>
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Rooms</label>
+                <select name="rooms" class="form-select">
+                    <option value="">Any</option>
+                    <option value="1" {{ request('rooms') == '1' ? 'selected' : '' }}>1 Room</option>
+                    <option value="2" {{ request('rooms') == '2' ? 'selected' : '' }}>2 Rooms</option>
+                    <option value="3" {{ request('rooms') == '3' ? 'selected' : '' }}>3+ Rooms</option>
+                </select>
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Payment Progress</label>
+                <select name="progress" class="form-select">
+                    <option value="">Any</option>
+                    <option value="full" {{ request('progress') == 'full' ? 'selected' : '' }}>Fully Paid (100%)</option>
+                    <option value="partial" {{ request('progress') == 'partial' ? 'selected' : '' }}>Partially Paid (1-99%)</option>
+                    <option value="none" {{ request('progress') == 'none' ? 'selected' : '' }}>Not Paid (0%)</option>
+                    <option value="overdue" {{ request('progress') == 'overdue' ? 'selected' : '' }}>Overdue</option>
+                </select>
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Tenant Status</label>
+                <select name="tenant_status" class="form-select">
+                    <option value="">Any</option>
+                    <option value="with_tenant" {{ request('tenant_status') == 'with_tenant' ? 'selected' : '' }}>With Tenant</option>
+                    <option value="without_tenant" {{ request('tenant_status') == 'without_tenant' ? 'selected' : '' }}>Without Tenant</option>
+                    <option value="with_credit" {{ request('tenant_status') == 'with_credit' ? 'selected' : '' }}>Tenant with Credit</option>
+                </select>
+            </div>
+
+            {{-- Search --}}
+            <div class="col-md-6">
+                <label class="form-label fw-semibold">Search</label>
+                <input type="text" name="search" class="form-control" 
+                       placeholder="Search by apartment number, tenant name..." 
+                       value="{{ request('search') }}">
+            </div>
+
+            {{-- Actions --}}
+            <div class="col-md-6">
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary flex-fill">
+                        <i class="bi bi-funnel"></i> Apply Filters
+                    </button>
+                    <a href="{{ route('admin.apartments.index') }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-clockwise"></i> Reset
+                    </a>
+                </div>
+            </div>
+        </form>
+
+        {{-- Active Filters Badges --}}
+        @if(request()->anyFilled(['search', 'landlord_id', 'location', 'status', 'rent_min', 'rent_max', 'rooms', 'progress', 'tenant_status']))
+        <div class="mt-3 pt-3 border-top">
+            <small class="text-muted me-2">Active filters:</small>
+            @if(request('search'))
+                <span class="badge bg-primary">Search: "{{ request('search') }}"</span>
+            @endif
+            @if(request('landlord_id'))
+                <span class="badge bg-info">Landlord: {{ $landlords->where('id', request('landlord_id'))->first()->name ?? 'N/A' }}</span>
+            @endif
+            @if(request('location'))
+                <span class="badge bg-info">Location: {{ request('location') }}</span>
+            @endif
+            @if(request('status'))
+                <span class="badge bg-warning text-dark">Status: {{ ucfirst(request('status')) }}</span>
+            @endif
+            @if(request('rent_min') || request('rent_max'))
+                <span class="badge bg-success">Rent: {{ request('rent_min') ? 'UGX '.number_format(request('rent_min')) : 'Min' }} - {{ request('rent_max') ? 'UGX '.number_format(request('rent_max')) : 'Max' }}</span>
+            @endif
+            @if(request('rooms'))
+                <span class="badge bg-secondary">Rooms: {{ request('rooms') }}+</span>
+            @endif
+            @if(request('progress'))
+                <span class="badge bg-dark">Progress: {{ ucfirst(request('progress')) }}</span>
+            @endif
+            @if(request('tenant_status'))
+                <span class="badge bg-primary">Tenant: {{ str_replace('_', ' ', ucfirst(request('tenant_status'))) }}</span>
+            @endif
+        </div>
+        @endif
+    </div>
 </div>
 
 @if(session('success'))
@@ -228,4 +338,24 @@
 </div>
 @endforeach
 
+@push('scripts')
+<script>
+$(document).ready(function() {
+    // Initialize Select2 for filters
+    $('.select2-landlord').select2({
+        theme: 'bootstrap-5',
+        placeholder: 'Select landlord...',
+        allowClear: true,
+        width: '100%'
+    });
+
+    $('.select2-location').select2({
+        theme: 'bootstrap-5',
+        placeholder: 'Select location...',
+        allowClear: true,
+        width: '100%'
+    });
+});
+</script>
+@endpush
 @endsection

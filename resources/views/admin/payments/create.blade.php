@@ -19,22 +19,36 @@
                 <div class="row">
                     <div class="col-md-6">
                         <div class="mb-3">
-                            <label class="form-label fw-semibold">Tenant <span class="text-danger">*</span></label>
-                            <select name="tenant_id" class="form-select" required>
-                                <option value="">-- Select Tenant --</option>
-                                @foreach($tenants as $t)
-                                <option value="{{ $t->id }}" {{ old('tenant_id')==$t->id?'selected':'' }}>
-                                    {{ $t->name }} 
-                                    @if($t->apartment)
-                                        (Apt: {{ $t->apartment->number }} - UGX {{ number_format($t->apartment->rent) }}/month)
-                                        @if($t->apartment->landlord)
-                                            - Landlord: {{ $t->apartment->landlord->name }}
-                                        @endif
-                                    @endif
-                                </option>
-                                @endforeach
-                            </select>
-                        </div>
+    <label class="form-label fw-semibold">Tenant <span class="text-danger">*</span></label>
+    <select name="tenant_id" class="form-select select2-tenant" required id="tenantSelect">
+        <option value="">-- Select Tenant --</option>
+        @foreach($tenants as $t)
+        <option value="{{ $t->id }}" {{ old('tenant_id')==$t->id?'selected':'' }}
+                data-rent="{{ $t->apartment->rent ?? 0 }}"
+                data-apartment="{{ $t->apartment->number ?? 'N/A' }}"
+                data-landlord="{{ $t->apartment->landlord->name ?? 'N/A' }}">
+            {{ $t->name }} ({{ $t->phone ?? 'No phone' }})
+            @if($t->apartment)
+                - Apt: {{ $t->apartment->number }}
+            @endif
+        </option>
+        @endforeach
+    </select>
+</div>
+
+<!-- Add this after the tenant select field -->
+<!-- Auto-filled Amount Section -->
+<div class="mb-3">
+    <label class="form-label fw-semibold">Suggested Rent Amount</label>
+    <div class="input-group">
+        <span class="input-group-text">UGX</span>
+        <input type="text" id="suggestedAmount" class="form-control" readonly>
+        <button type="button" class="btn btn-outline-secondary" onclick="useSuggestedAmount()">
+            Use This Amount
+        </button>
+    </div>
+    <small class="text-muted">Based on apartment rent: <span id="rentDetails">Select a tenant</span></small>
+</div>
                     </div>
 
                     <div class="col-md-6">
@@ -111,7 +125,42 @@
     </div>
 </div>
 
+@push('scripts')
 <script>
+$(document).ready(function() {
+    // Initialize Select2 for tenant search
+    $('.select2-tenant').select2({
+        theme: 'bootstrap-5',
+        placeholder: 'Search for tenant by name or phone...',
+        allowClear: true,
+        width: '100%'
+    });
+
+    // Auto-fill amount when tenant is selected
+    $('#tenantSelect').on('change', function() {
+        const selected = this.options[this.selectedIndex];
+        const rent = selected.getAttribute('data-rent');
+        const apartment = selected.getAttribute('data-apartment');
+        const landlord = selected.getAttribute('data-landlord');
+        
+        if (rent && rent > 0) {
+            $('#suggestedAmount').val(Number(rent).toLocaleString());
+            $('#rentDetails').text(`Apartment ${apartment} (${landlord}) - UGX ${Number(rent).toLocaleString()}/month`);
+        } else {
+            $('#suggestedAmount').val('');
+            $('#rentDetails').text('No apartment assigned or rent not set');
+        }
+    });
+});
+
+function useSuggestedAmount() {
+    const suggested = $('#suggestedAmount').val().replace(/,/g, '');
+    if (suggested) {
+        $('input[name="amount"]').val(suggested);
+    }
+}
+
+// Your existing payment method logic remains the same
 document.getElementById('paymentMethod').addEventListener('change', function() {
     const referenceField = document.getElementById('referenceField');
     if (this.value !== 'cash' && this.value !== 'pesapal') {
@@ -120,8 +169,7 @@ document.getElementById('paymentMethod').addEventListener('change', function() {
         referenceField.style.display = 'none';
     }
 });
-
-// Trigger change on page load
 document.getElementById('paymentMethod').dispatchEvent(new Event('change'));
 </script>
+@endpush
 @endsection

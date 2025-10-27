@@ -4,10 +4,15 @@
     <meta charset="UTF-8">
     <title>@yield('title','Admin Dashboard')</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-
+    <link rel="icon" href="{{ asset('images/favicon.png') }}" type="image/png">
+    
     <!-- Bootstrap & Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
+    
+    <!-- Select2 CSS -->
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" rel="stylesheet" />
 
     <style>
         body {
@@ -102,6 +107,20 @@
                 margin-left: 0;
             }
         }
+
+        .input-group .form-control:focus {
+    border-color: #0d6efd;
+    box-shadow: none;
+}
+.card {
+    border: 1px solid #e3e6f0;
+    border-radius: 0.5rem;
+}
+.table th {
+    border-top: none;
+    font-weight: 600;
+}
+
     </style>
 </head>
 <body>
@@ -171,6 +190,10 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <!-- Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<!-- jQuery & Select2 JS -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 
 @stack('scripts')
 </body>

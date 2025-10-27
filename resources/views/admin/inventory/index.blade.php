@@ -1,9 +1,9 @@
 @extends('admin.layouts.app')
 
-@section('title','Hotel Inventory')
+@section('title','Company Asset')
 
 @section('content')
-<h3 class="mb-4">🏨 Hotel Inventory</h3>
+<h3 class="mb-4"> Company Asset</h3>
 
 <a href="{{ route('admin.inventory.create') }}" class="btn btn-primary mb-3">➕ Add Inventory Item</a>
 

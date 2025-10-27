@@ -12,14 +12,22 @@
     {{-- Add landlord and location fields --}}
 <div class="mb-3">
     <label class="form-label">Landlord <span class="text-danger">*</span></label>
-    <select name="landlord_id" class="form-select" required>
-        <option value="">-- Select Landlord --</option>
+    <select name="landlord_id" class="form-select select2-landlord" required id="landlordSelect">
+        <option value="">-- Search Landlord --</option>
         @foreach($landlords as $landlord)
-            <option value="{{ $landlord->id }}" {{ old('landlord_id')==$landlord->id?'selected':'' }}>
-                {{ $landlord->name }} ({{ $landlord->commission_rate }}% commission)
+            <option value="{{ $landlord->id }}" {{ old('landlord_id')==$landlord->id?'selected':'' }}
+                    data-commission="{{ $landlord->commission_rate }}"
+                    data-phone="{{ $landlord->phone }}"
+                    data-email="{{ $landlord->email }}">
+                {{ $landlord->name }} 
+                @if($landlord->phone)
+                    - {{ $landlord->phone }}
+                @endif
+                ({{ $landlord->commission_rate }}% commission)
             </option>
         @endforeach
     </select>
+    <small class="text-muted">Type to search landlords by name or phone</small>
 </div>
 
 <div class="mb-3">
@@ -40,15 +48,65 @@
         <label class="form-label">Rent</label>
         <input type="number" name="rent" class="form-control" value="{{ old('rent') }}" required>
     </div>
+
     <div class="mb-3">
-        <label class="form-label">Tenant (optional)</label>
-        <select name="tenant_id" class="form-select">
-            <option value="">-- Unassigned --</option>
-            @foreach($tenants as $tenant)
-                <option value="{{ $tenant->id }}" {{ old('tenant_id')==$tenant->id?'selected':'' }}>{{ $tenant->name }}</option>
-            @endforeach
-        </select>
-    </div>
+    <label class="form-label">Tenant (optional)</label>
+    <select name="tenant_id" class="form-select select2-tenant">
+        <option value="">-- Search Tenant --</option>
+        @foreach($tenants as $tenant)
+            <option value="{{ $tenant->id }}" {{ old('tenant_id')==$tenant->id?'selected':'' }}>
+                {{ $tenant->name }} 
+                @if($tenant->phone)
+                    - {{ $tenant->phone }}
+                @endif
+            </option>
+        @endforeach
+    </select>
+    <small class="text-muted">Type to search tenants</small>
+</div>
     <button type="submit" class="btn btn-success">Save Apartment</button>
 </form>
+
+@push('scripts')
+<script>
+$(document).ready(function() {
+    // Initialize Select2 for landlord search
+    $('.select2-landlord').select2({
+        theme: 'bootstrap-5',
+        placeholder: 'Search by landlord name or phone...',
+        allowClear: true,
+        width: '100%'
+    });
+
+    // Auto-show landlord details when selected
+    $('#landlordSelect').on('change', function() {
+        const selected = this.options[this.selectedIndex];
+        const landlordDetails = $('#landlordDetails');
+        
+        if (this.value) {
+            // Show and fill landlord details
+            landlordDetails.show();
+            $('#landlordPhone').text(selected.getAttribute('data-phone') || 'Not provided');
+            $('#landlordEmail').text(selected.getAttribute('data-email') || 'Not provided');
+            $('#landlordCommission').text(selected.getAttribute('data-commission') || '0');
+        } else {
+            // Hide details if no landlord selected
+            landlordDetails.hide();
+        }
+    });
+
+    // Trigger change on page load if there's a selected value
+    $('#landlordSelect').trigger('change');
+
+    // Initialize Select2 for tenant search
+$('.select2-tenant').select2({
+    theme: 'bootstrap-5',
+    placeholder: 'Search by tenant name or phone...',
+    allowClear: true,
+    width: '100%'
+});
+
+});
+</script>
+@endpush
 @endsection
