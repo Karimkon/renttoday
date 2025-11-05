@@ -158,6 +158,11 @@ Route::prefix('payments')->name('payments.')->group(function () {
     Route::get('landlords/{landlord}/report/pdf/{month?}', [LandlordController::class, 'generatePdfReport'])
         ->name('landlords.report.pdf');
 
+     Route::post('landlords/{landlord}/mark-paid', [LandlordController::class, 'markPaymentPaid'])
+        ->name('landlords.mark-paid');
+    Route::post('landlords/{landlord}/mark-unpaid', [LandlordController::class, 'markPaymentUnpaid'])
+        ->name('landlords.mark-unpaid');                                             
+
 
     // Financial Reports
 Route::prefix('financial-reports')->name('financial-reports.')->group(function () {

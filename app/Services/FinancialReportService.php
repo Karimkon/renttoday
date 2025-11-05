@@ -13,72 +13,119 @@ use PDF;
 
 class FinancialReportService
 {
-    public function generateIncomeStatement($startDate, $endDate)
-    {
-        // Rental Income
-        $rentalIncome = Payment::whereBetween('month', [$startDate, $endDate])
-            ->where('status', 'paid')
-            ->sum('amount');
+    private function calculateAccountsReceivable($asOfDate)
+{
+    // Unpaid rent for current and past months
+    $currentMonth = Carbon::parse($asOfDate)->format('Y-m');
+    
+    // Get all apartments with tenants
+    $apartments = Apartment::with(['payments' => function($query) use ($asOfDate) {
+        $query->where('created_at', '<=', $asOfDate);
+    }])->whereHas('tenant')->get();
 
-        // Commission Income (from landlords)
-        $commissionIncome = 0;
-        $landlords = Landlord::with(['payments' => function($query) use ($startDate, $endDate) {
-            $query->whereBetween('month', [$startDate, $endDate])
-                  ->where('status', 'paid');
-        }])->get();
-
-        foreach ($landlords as $landlord) {
-            $totalRent = $landlord->payments->sum('amount');
-            $commissionIncome += $totalRent * ($landlord->commission_rate / 100);
-        }
-
-        // Other Income (you can expand this)
-        $otherIncome = 0;
-
-        $totalRevenue = $rentalIncome + $commissionIncome + $otherIncome;
-
-        // Expenses
-        $operatingExpenses = Expense::whereBetween('date', [$startDate, $endDate])
-            ->where('type', 'operating')
-            ->sum('amount');
-
-        $administrativeExpenses = Expense::whereBetween('date', [$startDate, $endDate])
-            ->where('type', 'administrative')
-            ->sum('amount');
-
-        $maintenanceExpenses = Expense::whereBetween('date', [$startDate, $endDate])
-            ->where('type', 'maintenance')
-            ->sum('amount');
-
-        $otherExpenses = Expense::whereBetween('date', [$startDate, $endDate])
-            ->where('type', 'other')
-            ->sum('amount');
-
-        $totalExpenses = $operatingExpenses + $administrativeExpenses + $maintenanceExpenses + $otherExpenses;
-
-        $netIncome = $totalRevenue - $totalExpenses;
-
-        return [
-            'period' => [
-                'start' => $startDate,
-                'end' => $endDate
-            ],
-            'revenue' => [
-                'rental_income' => $rentalIncome,
-                'commission_income' => $commissionIncome,
-                'other_income' => $otherIncome,
-                'total_revenue' => $totalRevenue
-            ],
-            'expenses' => [
-                'operating' => $operatingExpenses,
-                'administrative' => $administrativeExpenses,
-                'maintenance' => $maintenanceExpenses,
-                'other' => $otherExpenses,
-                'total_expenses' => $totalExpenses
-            ],
-            'net_income' => $netIncome
-        ];
+    $receivable = 0;
+    foreach ($apartments as $apartment) {
+        if (!$apartment->tenant) continue;
+        
+        // Calculate months since tenant moved in or apartment creation
+        $moveInDate = $apartment->tenant->created_at ?? $apartment->created_at;
+        $monthsOccupied = max(1, $moveInDate->diffInMonths(Carbon::parse($asOfDate)) + 1);
+        
+        // Total rent that should have been paid
+        $totalRentDue = $apartment->rent * $monthsOccupied;
+        
+        // Total rent actually paid
+        $totalPaid = $apartment->payments->where('status', 'paid')->sum('amount');
+        
+        // Tenant credit that can be applied
+        $credit = $apartment->tenant->credit_balance ?? 0;
+        
+        // Accounts receivable = rent due - payments made - credit available
+        $apartmentReceivable = max(0, $totalRentDue - $totalPaid - $credit);
+        $receivable += $apartmentReceivable;
     }
+
+    return $receivable;
+}
+
+    public function generateIncomeStatement($startDate, $endDate)
+{
+    // FIX: Rental Income should be ONLY your commission, not total rent collected
+    $totalRentCollected = Payment::whereBetween('month', [$startDate, $endDate])
+        ->where('status', 'paid')
+        ->sum('amount');
+
+    // Commission Income (from landlords) - THIS IS YOUR ACTUAL RENTAL INCOME
+    $commissionIncome = 0;
+    $landlordPayouts = 0; // Add this to track landlord share
+    
+    $landlords = Landlord::with(['payments' => function($query) use ($startDate, $endDate) {
+        $query->whereBetween('month', [$startDate, $endDate])
+              ->where('status', 'paid');
+    }])->get();
+
+    foreach ($landlords as $landlord) {
+        $landlordRent = $landlord->payments->sum('amount');
+        $landlordCommission = $landlordRent * ($landlord->commission_rate / 100);
+        $commissionIncome += $landlordCommission;
+        $landlordPayouts += ($landlordRent - $landlordCommission); // Landlord's share
+    }
+
+    // Other Income (you can expand this)
+    $otherIncome = 0;
+
+    // FIX: Your total revenue is commission + other income, NOT total rent
+    $totalRevenue = $commissionIncome + $otherIncome;
+
+    // Expenses (unchanged)
+    $operatingExpenses = Expense::whereBetween('date', [$startDate, $endDate])
+        ->where('type', 'operating')
+        ->sum('amount');
+
+    $administrativeExpenses = Expense::whereBetween('date', [$startDate, $endDate])
+        ->where('type', 'administrative')
+        ->sum('amount');
+
+    $maintenanceExpenses = Expense::whereBetween('date', [$startDate, $endDate])
+        ->where('type', 'maintenance')
+        ->sum('amount');
+
+    $otherExpenses = Expense::whereBetween('date', [$startDate, $endDate])
+        ->where('type', 'other')
+        ->sum('amount');
+
+    $totalExpenses = $operatingExpenses + $administrativeExpenses + $maintenanceExpenses + $otherExpenses;
+
+    $netIncome = $totalRevenue - $totalExpenses;
+
+    return [
+        'period' => [
+            'start' => $startDate,
+            'end' => $endDate
+        ],
+        'revenue_breakdown' => [ // ADD THIS NEW SECTION FOR CLARITY
+            'total_rent_collected' => $totalRentCollected,
+            'your_commission_income' => $commissionIncome,
+            'landlord_payouts' => $landlordPayouts,
+            'other_income' => $otherIncome,
+        ],
+        'revenue' => [
+            'rental_income' => $commissionIncome, // CHANGED: This is now just your commission
+            'commission_income' => $commissionIncome, // This might be redundant now
+            'other_income' => $otherIncome,
+            'total_revenue' => $totalRevenue
+        ],
+        'expenses' => [
+            'operating' => $operatingExpenses,
+            'administrative' => $administrativeExpenses,
+            'maintenance' => $maintenanceExpenses,
+            'other' => $otherExpenses,
+            'total_expenses' => $totalExpenses
+        ],
+        'net_income' => $netIncome,
+        'landlord_payouts' => $landlordPayouts, // ADD THIS
+    ];
+}
 
  public function generateBalanceSheet($asOfDate)
     {
@@ -159,47 +206,48 @@ class FinancialReportService
     return $pdf;
 }
 
-    public function generateProfitAndLoss($startDate, $endDate)
-    {
-        $incomeStatement = $this->generateIncomeStatement($startDate, $endDate);
-        
-        // Add late fee income
-        $lateFeeIncome = LatePaymentFee::whereBetween('created_at', [$startDate, $endDate])
-            ->where('status', 'paid')
-            ->sum('amount');
+   public function generateProfitAndLoss($startDate, $endDate)
+{
+    $incomeStatement = $this->generateIncomeStatement($startDate, $endDate);
+    
+    // Add late fee income (REMOVE DUPLICATE)
+    $lateFeeIncome = LatePaymentFee::whereBetween('created_at', [$startDate, $endDate])
+        ->where('status', 'paid')
+        ->sum('amount');
 
-        $totalRevenue = $incomeStatement['revenue']['total_revenue'] + $lateFeeIncome;
-        
-        // Calculate gross profit (Revenue - Cost of Sales)
-        $costOfSales = $this->calculateCostOfSales($startDate, $endDate);
-        $grossProfit = $totalRevenue - $costOfSales;
-        
-        // Calculate operating profit (Gross Profit - Operating Expenses)
-        $operatingExpenses = $incomeStatement['expenses']['operating'] + 
-                           $incomeStatement['expenses']['administrative'];
-        $operatingProfit = $grossProfit - $operatingExpenses;
-        
-        // Net profit (Operating Profit - Other Expenses + Other Income)
-        $netProfit = $operatingProfit - $incomeStatement['expenses']['maintenance'] 
-                   - $incomeStatement['expenses']['other'];
+    $totalRevenue = $incomeStatement['revenue']['total_revenue'] + $lateFeeIncome;
+    
+    // Calculate gross profit (Revenue - Cost of Sales)
+    $costOfSales = $this->calculateCostOfSales($startDate, $endDate);
+    $grossProfit = $totalRevenue - $costOfSales;
+    
+    // Calculate operating profit (Gross Profit - Operating Expenses)
+    $operatingExpenses = $incomeStatement['expenses']['operating'] + 
+                       $incomeStatement['expenses']['administrative'];
+    $operatingProfit = $grossProfit - $operatingExpenses;
+    
+    // Net profit (Operating Profit - Other Expenses + Other Income)
+    $netProfit = $operatingProfit - $incomeStatement['expenses']['maintenance'] 
+               - $incomeStatement['expenses']['other'];
 
-        return [
-            'period' => $incomeStatement['period'],
-            'revenue' => array_merge($incomeStatement['revenue'], [
-                'late_fee_income' => $lateFeeIncome,
-                'total_revenue' => $totalRevenue
-            ]),
-            'cost_of_sales' => $costOfSales,
-            'gross_profit' => $grossProfit,
-            'operating_expenses' => $operatingExpenses,
-            'operating_profit' => $operatingProfit,
-            'other_expenses' => [
-                'maintenance' => $incomeStatement['expenses']['maintenance'],
-                'other' => $incomeStatement['expenses']['other']
-            ],
-            'net_profit' => $netProfit
-        ];
-    }
+    return [
+        'period' => $incomeStatement['period'],
+        'revenue_breakdown' => $incomeStatement['revenue_breakdown'],
+        'revenue' => array_merge($incomeStatement['revenue'], [
+            'late_fee_income' => $lateFeeIncome,
+            'total_revenue' => $totalRevenue
+        ]),
+        'cost_of_sales' => $costOfSales,
+        'gross_profit' => $grossProfit,
+        'operating_expenses' => $operatingExpenses,
+        'operating_profit' => $operatingProfit,
+        'other_expenses' => [
+            'maintenance' => $incomeStatement['expenses']['maintenance'],
+            'other' => $incomeStatement['expenses']['other']
+        ],
+        'net_profit' => $netProfit
+    ];
+}
 
     public function exportIncomeStatementToPdf($incomeStatementData)
 {
@@ -346,55 +394,44 @@ public function exportProfitAndLossToPdf($profitLossData)
     }
 
     // Helper methods for balance sheet calculations
-    private function calculateCashBalance($asOfDate)
-    {
-        // Sum all payments received minus expenses paid
-        $totalPayments = Payment::where('status', 'paid')
-            ->where('created_at', '<=', $asOfDate)
-            ->sum('amount');
+ private function calculateCashBalance($asOfDate)
+{
+    // FIX: Cash should only include YOUR money (commissions), not landlord money
+    $totalPayments = Payment::where('status', 'paid')
+        ->where('created_at', '<=', $asOfDate)
+        ->sum('amount');
 
-        $totalExpenses = Expense::where('date', '<=', $asOfDate)
-            ->sum('amount');
+    $totalExpenses = Expense::where('date', '<=', $asOfDate)
+        ->sum('amount');
 
-        return $totalPayments - $totalExpenses; // Simplified calculation
-    }
+    // Calculate how much belongs to landlords
+    $landlordPayouts = $this->calculateAccountsPayable($asOfDate);
+    
+    // Your cash = total collected - landlord share - expenses
+    return $totalPayments - $landlordPayouts - $totalExpenses;
+}
 
-    private function calculateAccountsReceivable($asOfDate)
-    {
-        // Unpaid rent for current and past months
-        $currentMonth = Carbon::parse($asOfDate)->format('Y-m');
-        $apartments = Apartment::with(['payments' => function($query) use ($asOfDate) {
-            $query->where('created_at', '<=', $asOfDate);
-        }])->whereHas('tenant')->get();
-
-        $receivable = 0;
-        foreach ($apartments as $apartment) {
-            $monthsOccupied = $this->getMonthsOccupied($apartment, $asOfDate);
-            $totalPaid = $apartment->payments->sum('amount');
-            $totalDue = $apartment->rent * $monthsOccupied;
-            $receivable += max(0, $totalDue - $totalPaid);
-        }
-
-        return $receivable;
-    }
-
-    private function calculateAccountsPayable($asOfDate)
-    {
-        // Amount due to landlords (rent collected but not yet paid out)
-        $landlords = Landlord::with(['payments' => function($query) use ($asOfDate) {
-        $query->where('payments.created_at', '<=', $asOfDate) // Specify payments table
-              ->where('payments.status', 'paid'); // Specify payments table
+   private function calculateAccountsPayable($asOfDate)
+{
+    // FIX: Amount due to landlords (rent collected but not yet paid out to landlords)
+    $landlords = Landlord::with(['payments' => function($query) use ($asOfDate) {
+        $query->where('payments.created_at', '<=', $asOfDate)
+              ->where('payments.status', 'paid');
     }])->get();
 
-        $payable = 0;
-        foreach ($landlords as $landlord) {
-            $totalRent = $landlord->payments->sum('amount');
-            $commission = $totalRent * ($landlord->commission_rate / 100);
-            $payable += ($totalRent - $commission);
-        }
-
-        return $payable;
+    $payableToLandlords = 0;
+    foreach ($landlords as $landlord) {
+        $totalRentCollected = $landlord->payments->sum('amount');
+        $commission = $totalRentCollected * ($landlord->commission_rate / 100);
+        $landlordShare = $totalRentCollected - $commission; // This is what you owe landlords
+        $payableToLandlords += $landlordShare;
     }
+
+    return $payableToLandlords;
+}
+
+
+
 
     private function calculateFixedAssets($asOfDate)
     {

@@ -12,17 +12,59 @@
                     <h5 class="mb-0">CLIENT'S MONTHLY REPORT FOR THE MONTH OF: {{ strtoupper($reportData['month']->format('F Y')) }}</h5>
                     <h6 class="mb-0">CLIENT'S NAME: {{ strtoupper($reportData['landlord']->name) }}</h6>
                     <h6 class="mb-0">PROPERTY LOCATION: {{ $locations->implode(' and ') }}</h6>
+                    <h6 class="mb-0">COMMISSION RATE: {{ $reportData['landlord']->commission_rate }}%</h6>
+                    
+                    <!-- Payment Status Badge -->
+                    <div class="mt-2">
+                        @if($reportData['landlordPaymentStatus']['paid'])
+                            <span class="badge bg-success fs-6">
+                                <i class="bi bi-check-circle-fill"></i> 
+                                PAYMENT SENT TO LANDLORD 
+                                <small class="ms-2">({{ \Carbon\Carbon::parse($reportData['landlordPaymentStatus']['paid_at'])->format('M j, Y') }})</small>
+                            </span>
+                            <form method="POST" action="{{ route('admin.landlords.mark-unpaid', $reportData['landlord']) }}" class="d-inline">
+                                @csrf
+                                <input type="hidden" name="month" value="{{ $reportData['month']->format('Y-m') }}">
+                                <button type="submit" class="btn btn-sm btn-outline-warning ms-2" 
+                                        onclick="return confirm('Mark payment as unpaid?')">
+                                    <i class="bi bi-x-circle"></i> Mark Unpaid
+                                </button>
+                            </form>
+                        @else
+                            <span class="badge bg-warning text-dark fs-6">
+                                <i class="bi bi-clock-history"></i> 
+                                PAYMENT PENDING TO LANDLORD
+                            </span>
+                            @if($reportData['amountDue'] > 0)
+                            <form method="POST" action="{{ route('admin.landlords.mark-paid', $reportData['landlord']) }}" class="d-inline">
+                                @csrf
+                                <input type="hidden" name="month" value="{{ $reportData['month']->format('Y-m') }}">
+                                <input type="hidden" name="amount" value="{{ $reportData['amountDue'] }}">
+                                <button type="submit" class="btn btn-sm btn-outline-success ms-2">
+                                    <i class="bi bi-check-circle"></i> Mark as Paid
+                                </button>
+                            </form>
+                            @endif
+                        @endif
+                    </div>
                 </div>
                 <div class="col-auto">
                     <a href="{{ route('admin.landlords.report.pdf', ['landlord' => $reportData['landlord']->id, 'month' => $reportData['month']->format('Y-m')]) }}" 
-                       class="btn btn-primary">
-                        <i class="bi bi-download"></i> Export PDF
-                    </a>
+   class="btn btn-primary" target="_blank">
+    <i class="bi bi-download"></i> Export PDF/Print
+</a>
                 </div>
             </div>
         </div>
         <div class="card-body">
+            <!-- Rest of your existing report content remains exactly the same -->
             @foreach($locations as $location)
+            @php
+                $locationApartments = $reportData['apartments']->where('location', $location);
+                $locationTotal = 0;
+                $locationCommission = 0;
+            @endphp
+            
             <h5 class="mt-4">{{ strtoupper($location) }}</h5>
             <div class="table-responsive">
                 <table class="table table-bordered table-sm">
@@ -39,21 +81,32 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @php
-                            $locationApartments = $reportData['apartments']->where('location', $location);
-                            $locationTotal = 0;
-                            $locationCommission = 0;
-                        @endphp
-                        
                         @foreach($locationApartments as $apartment)
                         @php
-                            $payment = $apartment->getCurrentMonthPayment();
-                            $rentPaid = $payment ? $payment->amount : 0;
-                            $commission = $payment ? ($rentPaid * ($reportData['landlord']->commission_rate / 100)) : 0;
+                            $paymentStatus = $apartment->getPaymentStatusForReport($reportData['month']->format('Y-m'));
+                            $rentPaid = $paymentStatus['amount_paid'];
+                            $commission = $rentPaid * ($reportData['landlord']->commission_rate / 100);
                             $amount = $rentPaid - $commission;
                             
                             $locationTotal += $rentPaid;
                             $locationCommission += $commission;
+                            
+                            // Enhanced status display
+                            if ($paymentStatus['status'] === 'VACANT') {
+                                $statusDisplay = '<span class="badge bg-secondary">VACANT</span>';
+                            } elseif ($paymentStatus['status'] === 'PAID') {
+                                if ($paymentStatus['is_advance']) {
+                                    $statusDisplay = '<span class="badge bg-success">' . $paymentStatus['months_covered'] . ' MONTH' . ($paymentStatus['months_covered'] > 1 ? 'S' : '') . ' ADVANCE</span>';
+                                } elseif ($paymentStatus['is_partial']) {
+                                    $statusDisplay = '<span class="badge bg-warning text-dark">PARTIAL</span>';
+                                } else {
+                                    $statusDisplay = '<span class="badge bg-success">' . $reportData['month']->format('F') . '</span>';
+                                }
+                            } else {
+                                $statusDisplay = '<span class="badge bg-danger">UNPAID</span>';
+                            }
+                            
+                            $latestPayment = $apartment->getPaymentsMadeInMonth($reportData['month']->format('Y-m'))->sortByDesc('created_at')->first();
                         @endphp
                         <tr>
                             <td>{{ $apartment->number }}</td>
@@ -61,11 +114,23 @@
                             <td>UGX {{ number_format($rentPaid) }}</td>
                             <td>UGX {{ number_format($commission) }}</td>
                             <td>UGX {{ number_format($amount) }}</td>
-                            <td>{{ $payment ? $reportData['month']->format('F') : 'UNPAID' }}</td>
-                            <td>{{ $payment ? $payment->created_at->format('jS/m/Y') : '-' }}</td>
-                            <td>{{ $reportData['month']->copy()->addMonth()->format('F') }}</td>
+                            <td>{!! $statusDisplay !!}</td>
+                            <td>
+                                @if($latestPayment)
+                                    {{ $latestPayment->created_at->format('jS/m/Y') }}
+                                @else
+                                    -
+                                @endif
+                            </td>
+                            <td>
+                                @if($paymentStatus['is_advance'])
+                                    {{ $reportData['month']->copy()->addMonths($paymentStatus['months_covered'])->format('F Y') }}
+                                @else
+                                    {{ $reportData['month']->copy()->addMonth()->format('F') }}
+                                @endif
+                            </td>
                         </tr>
-                        @endforeach
+                        @endforeach    
                         
                         <!-- Location Totals -->
                         <tr class="table-warning fw-bold">
@@ -98,6 +163,18 @@
                                 <tr class="border-top">
                                     <td>Amount Due to Landlord:</td>
                                     <td class="fw-bold text-success">UGX {{ number_format($reportData['amountDue']) }}</td>
+                                </tr>
+                                <!-- Payment Status Summary -->
+                                <tr class="border-top">
+                                    <td>Payment Status:</td>
+                                    <td class="fw-bold">
+                                        @if($reportData['landlordPaymentStatus']['paid'])
+                                            <span class="text-success">✓ PAID to Landlord</span>
+                                            <br><small class="text-muted">Paid on: {{ \Carbon\Carbon::parse($reportData['landlordPaymentStatus']['paid_at'])->format('M j, Y g:i A') }}</small>
+                                        @else
+                                            <span class="text-warning">⏳ PENDING Payment</span>
+                                        @endif
+                                    </td>
                                 </tr>
                             </table>
                         </div>

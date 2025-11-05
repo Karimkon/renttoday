@@ -49,6 +49,9 @@ class AdminApartmentController extends Controller
             $q->where('number', 'like', "%{$search}%")
               ->orWhereHas('tenant', function($q) use ($search) {
                   $q->where('name', 'like', "%{$search}%");
+              })
+              ->orWhereHas('landlord', function($q) use ($search) {
+                  $q->where('name', 'like', "%{$search}%");
               });
         });
     }
@@ -58,37 +61,25 @@ class AdminApartmentController extends Controller
     $landlords = Landlord::all();
     $locations = Apartment::distinct()->pluck('location');
 
-    // Transform apartments to calculate rent data
+    // SIMPLE TRANSFORMATION: No credit balance calculations
     $apartments->transform(function ($apt) use ($month) {
-        $startOfMonth = Carbon::parse($month)->startOfMonth();
-        $endOfMonth = Carbon::parse($month)->endOfMonth();
-
-        // Sum of payments for the selected month
-        $apt->totalPaid = $apt->payments()
-            ->whereBetween('created_at', [$startOfMonth, $endOfMonth])
-            ->sum('amount');
+        // Get payment status for the selected month
+        $paymentStatus = $apt->getPaymentStatusForReport($month);
+        
+        // Simple payment calculation - just use the amount paid
+        $apt->totalPaid = $paymentStatus['amount_paid'];
+        $apt->dueAmount = max(0, $apt->rent - $apt->totalPaid);
 
         if (!$apt->tenant) {
             $apt->status = 'empty';
-            $apt->dueAmount = 0;
             $apt->progressPercentage = 0;
         } else {
-            // Calculate months since apartment was created
-            $monthsSinceStart = max(1, now()->diffInMonths($apt->created_at->copy()->startOfMonth()) + 1);
-
-            // Include tenant credit in due calculation
-            $credit = $apt->tenant->credit_balance ?? 0;
-            $apt->dueAmount = max(0, ($apt->rent * $monthsSinceStart) - $apt->totalPaid - $credit);
-
-            // Calculate progress percentage
-            $apt->progressPercentage = min(100, (($apt->totalPaid + $credit) / max(1, $apt->rent)) * 100);
-
-            // Determine payment status
-            $totalAvailable = $apt->totalPaid + $credit;
-            if ($totalAvailable >= $apt->rent) {
-                $apt->status = 'paid';
-            } elseif ($totalAvailable > 0) {
-                $apt->status = 'partial';
+            // Calculate progress percentage based on actual payments only
+            $apt->progressPercentage = min(100, ($apt->totalPaid / max(1, $apt->rent)) * 100);
+            
+            // Set status based on payment
+            if ($paymentStatus['status'] === 'PAID') {
+                $apt->status = $paymentStatus['is_partial'] ? 'partial' : 'paid';
             } else {
                 $apt->status = 'unpaid';
             }
@@ -123,7 +114,6 @@ class AdminApartmentController extends Controller
             switch ($request->tenant_status) {
                 case 'with_tenant': return $apt->tenant !== null;
                 case 'without_tenant': return $apt->tenant === null;
-                case 'with_credit': return $apt->tenant && ($apt->tenant->credit_balance ?? 0) > 0;
                 default: return true;
             }
         });

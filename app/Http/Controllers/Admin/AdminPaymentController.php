@@ -11,40 +11,83 @@ use App\Models\Landlord;
 use App\Models\LatePaymentFee;
 use App\Services\PesapalService;
 use Carbon\Carbon;
+use App\Services\RentReminderService;
+use Illuminate\Support\Facades\Log;
 
 class AdminPaymentController extends Controller
 {
     protected $pesapalService;
+    protected $reminderService;
 
-    public function __construct(PesapalService $pesapalService)
+    public function __construct(PesapalService $pesapalService, RentReminderService $reminderService)
     {
         $this->pesapalService = $pesapalService;
+        $this->reminderService = $reminderService;
     }
 
     public function index(Request $request)
     {
-        $query = Payment::with(['tenant', 'apartment.landlord']);
+        $query = Payment::with(['tenant', 'apartment.landlord', 'processedBy']);
 
-        // Filter by payment method
+        // Extended search filters
         if ($request->filled('payment_method')) {
             $query->where('payment_method', $request->payment_method);
         }
 
-        // Filter by status
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
 
-        // Filter by month
         if ($request->filled('month')) {
             $query->where('month', 'like', $request->month . '%');
         }
 
-        $payments = $query->orderBy('month', 'desc')->paginate(20);
+        // NEW: Search by tenant name
+        if ($request->filled('tenant_search')) {
+            $query->whereHas('tenant', function($q) use ($request) {
+                $q->where('name', 'like', '%' . $request->tenant_search . '%');
+            });
+        }
+
+        // NEW: Search by apartment number
+        if ($request->filled('apartment_search')) {
+            $query->whereHas('apartment', function($q) use ($request) {
+                $q->where('number', 'like', '%' . $request->apartment_search . '%');
+            });
+        }
+
+        // NEW: Search by landlord name
+        if ($request->filled('landlord_search')) {
+            $query->whereHas('apartment.landlord', function($q) use ($request) {
+                $q->where('name', 'like', '%' . $request->landlord_search . '%');
+            });
+        }
+
+        // NEW: Filter by date range
+        if ($request->filled('date_from')) {
+            $query->whereDate('created_at', '>=', $request->date_from);
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('created_at', '<=', $request->date_to);
+        }
+
+        // NEW: Filter by amount range
+        if ($request->filled('amount_min')) {
+            $query->where('amount', '>=', $request->amount_min);
+        }
+
+        if ($request->filled('amount_max')) {
+            $query->where('amount', '<=', $request->amount_max);
+        }
+
+        $payments = $query->orderBy('created_at', 'desc')->paginate(20);
         $totalCollected = Payment::where('status', 'paid')->sum('amount');
 
         return view('admin.payments.index', compact('payments', 'totalCollected'));
     }
+
+
 
     public function create()
     {
@@ -83,59 +126,59 @@ class AdminPaymentController extends Controller
      * Process cash/bank/mobile money payments immediately
      */
     private function processManualPayment($tenant, $apartment, $data)
-    {
-        $rent = $apartment->rent;
-        $totalAmount = $data['amount'] + ($tenant->credit_balance ?? 0);
+{
+    $rent = $apartment->rent;
+    $totalAmount = $data['amount'];
 
-        // Calculate months covered and remainder
-        $monthsCovered = floor($totalAmount / $rent);
-        $remainder = $totalAmount - ($monthsCovered * $rent);
+    // SIMPLE APPROACH: Create payment record with whatever amount was paid
+    // No credit balance calculations
+    
+    $paymentMonth = $data['month'] . '-01';
 
-        $startMonth = Carbon::createFromFormat('Y-m', $data['month']);
+    // Check if payment already exists for this month
+    $existingPayment = Payment::where('tenant_id', $tenant->id)
+        ->whereYear('month', substr($paymentMonth, 0, 4))
+        ->whereMonth('month', substr($paymentMonth, 5, 2))
+        ->first();
 
-        $processedMonths = 0;
+    if (!$existingPayment) {
+        $payment = Payment::create([
+            'tenant_id' => $tenant->id,
+            'apartment_id' => $apartment->id,
+            'month' => $paymentMonth,
+            'amount' => $totalAmount, // Save the actual amount paid
+            'payment_method' => $data['payment_method'],
+            'reference_number' => $data['reference_number'],
+            'includes_gym' => $data['includes_gym'] ?? false,
+            'status' => 'paid',
+            'paid_at' => now(),
+            'processed_by' => auth()->id(),
+            'notes' => $data['notes'] ?? ($totalAmount < $rent ? 'Partial payment' : null)
+        ]);
 
-        for ($i = 0; $i < $monthsCovered; $i++) {
-            $paymentMonth = $startMonth->copy()->addMonths($i)->format('Y-m');
-
-            // Check if payment already exists for this month
-            $exists = Payment::where('tenant_id', $tenant->id)
-                ->whereYear('month', substr($paymentMonth, 0, 4))
-                ->whereMonth('month', substr($paymentMonth, 5, 2))
-                ->exists();
-
-            if (!$exists) {
-                Payment::create([
-                    'tenant_id' => $tenant->id,
-                    'apartment_id' => $apartment->id,
-                    'month' => $paymentMonth . '-01',
-                    'amount' => $rent,
-                    'payment_method' => $data['payment_method'],
-                    'reference_number' => $data['reference_number'],
-                    'includes_gym' => $data['includes_gym'] ?? false,
-                    'status' => 'paid',
-                    'paid_at' => now(),
-                    'processed_by' => auth()->id(),
-                    'notes' => $data['notes'] ?? null
-                ]);
-
-                $processedMonths++;
-
-                // Clear any late fees for this month
-                $this->clearLateFees($tenant->id, $paymentMonth);
-            }
+        // Send payment confirmation SMS
+        try {
+            $this->reminderService->sendPaymentConfirmation($payment);
+        } catch (\Exception $e) {
+            Log::error('Failed to send payment confirmation SMS: ' . $e->getMessage());
         }
 
-        // Update tenant credit balance
-        $tenant->update(['credit_balance' => $remainder]);
-
-        $message = "Manual payment processed for {$processedMonths} month(s). ";
-        $message .= $remainder > 0 ? "Remaining credit: UGX " . number_format($remainder) : "No credit balance.";
-
-        return redirect()->route('admin.payments.index')
-                         ->with('success', $message);
+        // Clear any late fees for this month
+        $this->clearLateFees($tenant->id, $data['month']);
+        
+        $message = "Payment of UGX " . number_format($totalAmount) . " recorded for " . 
+                  Carbon::createFromFormat('Y-m', $data['month'])->format('F Y');
+        
+        if ($totalAmount < $rent) {
+            $message .= " (Partial payment)";
+        }
+    } else {
+        $message = "Payment already exists for this month.";
     }
 
+    return redirect()->route('admin.payments.index')
+                     ->with('success', $message);
+}
     /**
      * Initiate Pesapal payment (admin-initiated for tenant)
      */
@@ -201,7 +244,7 @@ class AdminPaymentController extends Controller
             throw new \Exception('Pesapal payment initiation failed');
 
         } catch (\Exception $e) {
-            \Log::error('Admin Pesapal payment error: ' . $e->getMessage());
+            Log::error('Admin Pesapal payment error: ' . $e->getMessage());
             return back()->with('error', 'Failed to initiate Pesapal payment: ' . $e->getMessage());
         }
     }
@@ -259,7 +302,7 @@ class AdminPaymentController extends Controller
             $paymentMonth = $startMonth->copy()->addMonths($i)->format('Y-m');
 
             // Update or create payment record
-            Payment::updateOrCreate(
+            $payment = Payment::updateOrCreate(
                 [
                     'tenant_id' => $paymentIntent['tenant_id'],
                     'apartment_id' => $paymentIntent['apartment_id'],
@@ -278,6 +321,13 @@ class AdminPaymentController extends Controller
             );
 
             $processedMonths++;
+
+            // Send payment confirmation SMS
+            try {
+                $this->reminderService->sendPaymentConfirmation($payment);
+            } catch (\Exception $e) {
+                Log::error('Failed to send payment confirmation SMS: ' . $e->getMessage());
+            }
 
             // Clear late fees for this month
             $this->clearLateFees($paymentIntent['tenant_id'], $paymentMonth);
@@ -327,7 +377,8 @@ class AdminPaymentController extends Controller
             'payment_method' => 'required|in:cash,pesapal,bank_transfer,mobile_money',
             'includes_gym' => 'nullable|boolean',
             'reference_number' => 'nullable|string|max:100',
-            'status' => 'required|in:pending,paid,failed,refunded'
+            'status' => 'required|in:pending,paid,failed,refunded',
+            'notes' => 'nullable|string' // ADDED: Allow notes editing
         ]);
 
         $tenant = Tenant::with('apartment')->findOrFail($data['tenant_id']);
@@ -339,10 +390,27 @@ class AdminPaymentController extends Controller
         $data['apartment_id'] = $tenant->apartment->id;
         $data['month'] = $data['month'] . '-01';
 
-        // If marking as paid, set paid_at timestamp
-        if ($data['status'] === 'paid' && $payment->status !== 'paid') {
+        // Track if status is changing to paid
+        $wasPaid = $payment->status === 'paid';
+        $isNowPaid = $data['status'] === 'paid';
+
+        // If marking as paid and it wasn't paid before, set paid_at timestamp
+        if ($isNowPaid && !$wasPaid) {
             $data['paid_at'] = now();
             $data['processed_by'] = auth()->id();
+            
+            // Send payment confirmation SMS only if it's a new payment
+            try {
+                $this->reminderService->sendPaymentConfirmation($payment);
+            } catch (\Exception $e) {
+                Log::error('Failed to send payment confirmation SMS: ' . $e->getMessage());
+            }
+        }
+
+        // If changing from paid to another status, clear paid_at
+        if ($wasPaid && !$isNowPaid) {
+            $data['paid_at'] = null;
+            $data['processed_by'] = null;
         }
 
         $payment->update($data);
@@ -370,6 +438,13 @@ class AdminPaymentController extends Controller
             'payment_method' => 'cash' // Default for quick mark
         ]);
 
+        // Send payment confirmation SMS
+        try {
+            $this->reminderService->sendPaymentConfirmation($payment);
+        } catch (\Exception $e) {
+            Log::error('Failed to send payment confirmation SMS: ' . $e->getMessage());
+        }
+
         return back()->with('success', 'Payment marked as paid.');
     }
 
@@ -380,5 +455,24 @@ class AdminPaymentController extends Controller
     {
         $payment->load(['tenant', 'apartment.landlord']);
         return view('admin.payments.show', compact('payment'));
+    }
+
+    /**
+     * Send manual rent reminder to specific tenant
+     */
+    public function sendManualReminder(Tenant $tenant)
+    {
+        try {
+            $success = $this->reminderService->sendRentReminderToTenant($tenant);
+            
+            if ($success) {
+                return back()->with('success', 'Rent reminder sent successfully to ' . $tenant->name);
+            } else {
+                return back()->with('error', 'Failed to send rent reminder to ' . $tenant->name);
+            }
+        } catch (\Exception $e) {
+            Log::error('Manual rent reminder error: ' . $e->getMessage());
+            return back()->with('error', 'Error sending reminder: ' . $e->getMessage());
+        }
     }
 }

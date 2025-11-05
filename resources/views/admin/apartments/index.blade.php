@@ -176,6 +176,8 @@
             </div>
         </form>
 
+        <a class="btn btn-success mt-4" href="{{ route('admin.apartments.create') }}">➕ Add New Apartment</a>  
+
         {{-- Active Filters Badges --}}
         @if(request()->anyFilled(['search', 'landlord_id', 'location', 'status', 'rent_min', 'rent_max', 'rooms', 'progress', 'tenant_status']))
         <div class="mt-3 pt-3 border-top">
@@ -233,64 +235,56 @@
         </thead>
         <tbody>
             @foreach($apartments as $apartment)
-            <tr>
-                <td>{{ $apartment->id }}</td>
-                <td>{{ $apartment->number }}</td>
-                <td>
-            @if($apartment->landlord)
-                <span class="badge bg-primary">{{ $apartment->landlord->name }}</span>
-                <small class="text-muted d-block">{{ $apartment->landlord->commission_rate }}% commission</small>
+<tr>
+    <td>{{ $apartment->number }}</td>
+    <td>{{ $apartment->landlord->name }}</td>
+    <td>{{ $apartment->landlord->commission_rate }}% commission</td>
+    <td>{{ $apartment->rooms }}</td>
+    <td>UGX {{ number_format($apartment->rent) }}</td>
+    <td>
+        @if($apartment->tenant)
+            {{ $apartment->tenant->name }}
+        @else
+            <span class="text-muted">Vacant</span>
+        @endif
+    </td>
+    <td>
+        @if($apartment->tenant)
+            @if($apartment->status === 'paid')
+                <span class="badge bg-success">Paid</span>
+            @elseif($apartment->status === 'partial')
+                <span class="badge bg-warning text-dark">Partial</span>
             @else
-                <span class="badge bg-secondary">No Landlord</span>
+                <span class="badge bg-danger">Unpaid</span>
             @endif
-        </td>
-                <td>{{ $apartment->rooms }}</td>
-                <td>{{ number_format($apartment->rent) }}</td>
-                <td>{{ $apartment->tenant?->name ?? 'Unassigned' }}</td>
-                <td>
-                    @php
-                        $statusColors = ['paid'=>'success','partial'=>'warning','unpaid'=>'danger','empty'=>'secondary'];
-                    @endphp
-                    <span class="badge bg-{{ $statusColors[$apartment->status] ?? 'secondary' }}">
-                        {{ $apartment->status=='empty'?'Empty':ucfirst($apartment->status) }}
-                    </span>
-                </td>
-                <td>{{ $apartment->status!='empty' ? 'UGX '.number_format($apartment->dueAmount) : '-' }}</td>
-                <td>
-                    <span class="badge bg-info text-dark">
-                        {{ number_format($apartment->totalPaid) }}/{{ number_format($apartment->rent) }}
-                    </span>
-                </td>
-                <td>
-                    @if($apartment->tenant && $apartment->tenant->credit_balance > 0)
-                        <span class="badge bg-success mb-1 d-block">
-                            + UGX {{ number_format($apartment->tenant->credit_balance) }} credit
-                        </span>
-                    @endif
-
-                    @if($apartment->status!='empty')
-                        <div class="progress">
-                            <div class="progress-bar bg-{{ $statusColors[$apartment->status] ?? 'secondary' }}" 
-                                 role="progressbar" 
-                                 style="width: {{ min(100, ($apartment->totalPaid / max(1,$apartment->rent)) * 100) }}%">
-                            </div>
-                        </div>
-                    @else
-                        <span class="text-muted">No tenant</span>
-                    @endif
-                </td>
-                <td>
-                    <a href="{{ route('admin.apartments.edit', $apartment) }}" class="btn btn-sm btn-warning mb-1">✏️ Edit</a>
-                    <a href="{{ route('admin.payments.create') }}?tenant={{ $apartment->tenant?->id }}" class="btn btn-sm btn-success mb-1">➕ Payment</a>
-                    <button type="button" class="btn btn-sm btn-info mb-1" data-bs-toggle="modal" data-bs-target="#historyModal{{ $apartment->id }}">📄 History</button>
-                    <form action="{{ route('admin.apartments.destroy', $apartment) }}" method="POST" style="display:inline-block;">
-                        @csrf
-                        @method('DELETE')
-                        <button class="btn btn-sm btn-danger" onclick="return confirm('Are you sure?')">🗑 Delete</button>
-                    </form>
-                </td>
-            </tr>
-            @endforeach
+        @else
+            <span class="badge bg-secondary">Vacant</span>
+        @endif
+    </td>
+    <td>
+        @if($apartment->tenant)
+            UGX {{ number_format($apartment->totalPaid) }} / UGX {{ number_format($apartment->rent) }}
+            @if($apartment->status === 'partial')
+                <br><small class="text-warning">Balance: UGX {{ number_format($apartment->dueAmount) }}</small>
+            @endif
+        @else
+            -
+        @endif
+    </td>
+    <td>
+        @if($apartment->tenant)
+        <div class="progress" style="height: 20px;">
+            <div class="progress-bar {{ $apartment->status === 'paid' ? 'bg-success' : 'bg-warning' }}" 
+                 style="width: {{ $apartment->progressPercentage }}%">
+            </div>
+        </div>
+        <small>{{ number_format($apartment->progressPercentage, 1) }}%</small>
+        @else
+        -
+        @endif
+    </td>
+</tr>
+@endforeach
         </tbody>
     </table>
 </div>

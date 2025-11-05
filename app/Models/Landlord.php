@@ -15,11 +15,13 @@ class Landlord extends Model
         'phone',
         'commission_rate',
         'address',
-        'notes'
+        'notes',
+        'payment_status' // ADD THIS
     ];
 
     protected $casts = [
-        'commission_rate' => 'decimal:2'
+        'commission_rate' => 'decimal:2',
+        'payment_status' => 'array' // ADD THIS
     ];
 
     public function apartments()
@@ -33,13 +35,13 @@ class Landlord extends Model
     }
 
     // Calculate total commission for a specific period
-public function calculateCommission($startDate, $endDate)
-{
-    return $this->payments()
-        ->whereBetween('month', [$startDate, $endDate])
-        ->where('status', 'paid')
-        ->sum('amount') * ($this->commission_rate / 100);
-}
+    public function calculateCommission($startDate, $endDate)
+    {
+        return $this->payments()
+            ->whereBetween('month', [$startDate, $endDate])
+            ->where('status', 'paid')
+            ->sum('amount') * ($this->commission_rate / 100);
+    }
 
     // Calculate total rent collected for landlord
     public function totalRentCollected($startDate, $endDate)
@@ -57,5 +59,52 @@ public function calculateCommission($startDate, $endDate)
         $commission = $this->calculateCommission($startDate, $endDate);
         
         return $totalRent - $commission;
+    }
+
+    // ADD THESE NEW METHODS FOR PAYMENT STATUS
+    /**
+     * Mark payment as paid for a specific month
+     */
+    public function markPaymentAsPaid($month, $amount)
+    {
+        $status = $this->payment_status ?? [];
+        $status[$month] = [
+            'paid' => true,
+            'paid_at' => now()->toDateTimeString(),
+            'amount' => $amount,
+            'paid_by' => auth()->id()
+        ];
+        
+        $this->update(['payment_status' => $status]);
+    }
+
+    /**
+     * Mark payment as unpaid for a specific month
+     */
+    public function markPaymentAsUnpaid($month)
+    {
+        $status = $this->payment_status ?? [];
+        if (isset($status[$month])) {
+            unset($status[$month]);
+            $this->update(['payment_status' => $status]);
+        }
+    }
+
+    /**
+     * Check if payment is paid for a specific month
+     */
+    public function isPaymentPaid($month)
+    {
+        $status = $this->payment_status ?? [];
+        return isset($status[$month]) && $status[$month]['paid'] === true;
+    }
+
+    /**
+     * Get payment status for a specific month
+     */
+    public function getPaymentStatus($month)
+    {
+        $status = $this->payment_status ?? [];
+        return $status[$month] ?? ['paid' => false, 'paid_at' => null, 'amount' => 0];
     }
 }

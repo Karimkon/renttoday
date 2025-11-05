@@ -54,6 +54,35 @@
                         </table>
                     </div>
 
+                    <!-- Add this after the Revenue Section -->
+<div class="table-responsive mt-4">
+    <table class="table table-bordered">
+        <thead class="table-light">
+            <tr>
+                <th colspan="2" class="bg-info text-white">REVENUE BREAKDOWN</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td width="70%">Total Rent Collected from Tenants</td>
+                <td class="text-end">UGX {{ number_format($incomeStatement['revenue_breakdown']['total_rent_collected'], 2) }}</td>
+            </tr>
+            <tr>
+                <td>Your Commission Income ({{ number_format(($incomeStatement['revenue_breakdown']['your_commission_income'] / max(1, $incomeStatement['revenue_breakdown']['total_rent_collected'])) * 100, 1) }}%)</td>
+                <td class="text-end text-success">UGX {{ number_format($incomeStatement['revenue_breakdown']['your_commission_income'], 2) }}</td>
+            </tr>
+            <tr>
+                <td>Amount Due to Landlords</td>
+                <td class="text-end text-warning">UGX {{ number_format($incomeStatement['revenue_breakdown']['landlord_payouts'], 2) }}</td>
+            </tr>
+            <tr class="table-info fw-bold">
+                <td>Your Net Revenue (After Landlord Payouts)</td>
+                <td class="text-end">UGX {{ number_format($incomeStatement['revenue']['total_revenue'], 2) }}</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
                     <!-- Expenses Section -->
                     <div class="table-responsive mt-4">
                         <table class="table table-bordered">

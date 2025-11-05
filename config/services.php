@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'egosms' => [
+        'username' => env('EGOSMS_USERNAME'),
+        'password' => env('EGOSMS_PASSWORD'),
+        'sender_id' => env('EGOSMS_SENDER_ID', 'PHILWIL'),
+    ],
+
 ];

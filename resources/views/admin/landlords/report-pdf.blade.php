@@ -25,12 +25,6 @@
             margin: 3px 0; 
             font-size: 14px; 
         }
-        .client-info { 
-            margin-bottom: 15px; 
-        }
-        .client-info p { 
-            margin: 2px 0;
-        }
         .table { 
             width: 100%; 
             border-collapse: collapse; 
@@ -72,6 +66,10 @@
             border-top: 1px solid #ccc;
             font-size: 9px;
         }
+        .status-advance { color: #28a745; font-weight: bold; }
+        .status-partial { color: #ffc107; font-weight: bold; }
+        .status-unpaid { color: #dc3545; font-weight: bold; }
+        .status-vacant { color: #6c757d; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -81,8 +79,18 @@
         <h2>CLIENT'S MONTHLY REPORT FOR THE MONTH OF: {{ strtoupper($reportData['month']->format('F Y')) }}</h2>
         <p><strong>CLIENT'S NAME:</strong> {{ strtoupper($reportData['landlord']->name) }}</p>
         <p><strong>PROPERTY LOCATION:</strong> {{ $locations->implode(' and ') }}</p>
+        <p><strong>COMMISSION RATE:</strong> {{ $reportData['landlord']->commission_rate }}%</p>
     </div>
 
+    <!-- Add this to your PDF header section -->
+<p><strong>PAYMENT STATUS:</strong> 
+    @if($reportData['landlordPaymentStatus']['paid'])
+        <strong style="color: #28a745;">PAID TO LANDLORD</strong>
+        ({{ \Carbon\Carbon::parse($reportData['landlordPaymentStatus']['paid_at'])->format('M j, Y') }})
+    @else
+        <strong style="color: #ffc107;">PENDING PAYMENT</strong>
+    @endif
+</p>
     <!-- Apartments by Location -->
     @foreach($locations as $location)
         @php
@@ -112,15 +120,38 @@
             <tbody>
                 @foreach($locationApartments as $apartment)
                 @php
-                    // FIX: Use the same logic as web view - get current month payment
-                    $payment = $apartment->payments->first(); // This gets the first payment for the month
-                    $rentPaid = $payment ? $payment->amount : 0;
-                    $commission = $payment ? ($rentPaid * ($reportData['landlord']->commission_rate / 100)) : 0;
+                    // NEW: Use the enhanced payment status method (same as web view)
+                    $paymentStatus = $apartment->getPaymentStatusForReport($reportData['month']->format('Y-m'));
+                    $rentPaid = $paymentStatus['amount_paid'];
+                    $commission = $rentPaid * ($reportData['landlord']->commission_rate / 100);
                     $amount = $rentPaid - $commission;
                     
                     $locationTotal += $rentPaid;
                     $locationCommission += $commission;
                     $locationAmount += $amount;
+                    
+                    // Enhanced status display
+                    if ($paymentStatus['status'] === 'VACANT') {
+                        $statusDisplay = 'VACANT';
+                        $statusClass = 'status-vacant';
+                    } elseif ($paymentStatus['status'] === 'PAID') {
+                        if ($paymentStatus['is_advance']) {
+                            $statusDisplay = $paymentStatus['months_covered'] . ' MONTH' . ($paymentStatus['months_covered'] > 1 ? 'S' : '') . ' ADVANCE';
+                            $statusClass = 'status-advance';
+                        } elseif ($paymentStatus['is_partial']) {
+                            $statusDisplay = 'PARTIAL (' . number_format($rentPaid) . ')';
+                            $statusClass = 'status-partial';
+                        } else {
+                            $statusDisplay = $reportData['month']->format('F');
+                            $statusClass = '';
+                        }
+                    } else {
+                        $statusDisplay = 'UNPAID';
+                        $statusClass = 'status-unpaid';
+                    }
+                    
+                    // Get latest payment date for this month
+                    $latestPayment = $apartment->getPaymentsMadeInMonth($reportData['month']->format('Y-m'))->sortByDesc('created_at')->first();
                 @endphp
                 <tr>
                     <td>{{ $apartment->number }}</td>
@@ -128,15 +159,21 @@
                     <td>UGX {{ number_format($rentPaid) }}</td>
                     <td>UGX {{ number_format($commission) }}</td>
                     <td>UGX {{ number_format($amount) }}</td>
-                    <td>{{ $payment ? $reportData['month']->format('F') : 'UNPAID' }}</td>
+                    <td class="{{ $statusClass }}">{{ $statusDisplay }}</td>
                     <td>
-                        @if($payment && $payment->created_at)
-                            {{ $payment->created_at->format('jS/m/Y') }}
+                        @if($latestPayment)
+                            {{ $latestPayment->created_at->format('jS/m/Y') }}
                         @else
                             -
                         @endif
                     </td>
-                    <td>{{ $reportData['month']->copy()->addMonth()->format('F') }}</td>
+                    <td>
+                        @if($paymentStatus['is_advance'])
+                            {{ $reportData['month']->copy()->addMonths($paymentStatus['months_covered'])->format('F Y') }}
+                        @else
+                            {{ $reportData['month']->copy()->addMonth()->format('F') }}
+                        @endif
+                    </td>
                 </tr>
                 @endforeach
                 
