@@ -72,6 +72,7 @@
                                     <input type="month" name="month" class="form-control" value="{{ old('month', date('Y-m')) }}" required>
                                 </div>
                             </div>
+                            
 
                             <div class="col-md-6">
                                 <div class="mb-3">
@@ -80,6 +81,17 @@
                                 </div>
                             </div>
                         </div>
+
+                        <div class="row">
+    <div class="col-md-6">
+        <div class="mb-3">
+            <label class="form-label fw-semibold">Actual Payment Date</label>
+            <input type="date" name="actual_payment_date" class="form-control" 
+                   value="{{ old('actual_payment_date', date('Y-m-d')) }}">
+            <small class="text-muted">The date when tenant actually made the payment</small>
+        </div>
+    </div>
+</div>
 
                         <!-- Reference Number (shown for non-cash methods) -->
                         <div class="row" id="referenceField" style="display: none;">

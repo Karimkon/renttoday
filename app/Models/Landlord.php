@@ -16,12 +16,12 @@ class Landlord extends Model
         'commission_rate',
         'address',
         'notes',
-        'payment_status' // ADD THIS
+        'payment_status'
     ];
 
     protected $casts = [
         'commission_rate' => 'decimal:2',
-        'payment_status' => 'array' // ADD THIS
+        'payment_status' => 'array'
     ];
 
     public function apartments()
@@ -32,6 +32,36 @@ class Landlord extends Model
     public function payments()
     {
         return $this->hasManyThrough(Payment::class, Apartment::class);
+    }
+
+    /**
+     * Get all report notes for this landlord.
+     */
+    public function reportNotes()
+    {
+        return $this->hasMany(ReportNote::class);
+    }
+
+    /**
+     * Get the report note for a specific month.
+     */
+    public function getNoteForMonth($month)
+    {
+        return $this->reportNotes()->where('month', $month)->first();
+    }
+
+    /**
+     * Create or update a note for a specific month.
+     */
+    public function saveNoteForMonth($month, $notes, $userId)
+    {
+        return $this->reportNotes()->updateOrCreate(
+            ['month' => $month],
+            [
+                'notes' => $notes,
+                'created_by' => $userId
+            ]
+        );
     }
 
     // Calculate total commission for a specific period
@@ -61,7 +91,6 @@ class Landlord extends Model
         return $totalRent - $commission;
     }
 
-    // ADD THESE NEW METHODS FOR PAYMENT STATUS
     /**
      * Mark payment as paid for a specific month
      */

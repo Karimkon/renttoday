@@ -102,14 +102,19 @@
                         </div>
                     </div>
                     
-                    <div class="col-md-6">
-                        <div class="mb-3 form-check pt-4">
-                            <input type="checkbox" name="includes_gym" value="1" class="form-check-input" 
-                                   {{ old('includes_gym',$payment->includes_gym)?'checked':'' }}>
-                            <label class="form-check-label">Includes Gym Fee</label>
-                        </div>
-                    </div>
+                    
                 </div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="mb-3">
+            <label class="form-label fw-semibold">Actual Payment Date</label>
+            <input type="date" name="actual_payment_date" class="form-control" 
+                   value="{{ old('actual_payment_date', $payment->actual_payment_date ? $payment->actual_payment_date->format('Y-m-d') : '') }}">
+            <small class="text-muted">The date when tenant actually made the payment</small>
+        </div>
+    </div>
+</div>
 
                 <div class="mb-3">
                     <label class="form-label">Notes</label>

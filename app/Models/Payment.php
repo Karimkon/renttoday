@@ -21,14 +21,15 @@ class Payment extends Model
         'status',
         'order_tracking_id',
         'paid_at',
+        'actual_payment_date',
         'processed_by',
         'notes'
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
-        'includes_gym' => 'boolean',
         'paid_at' => 'datetime',
+        'actual_payment_date' => 'date',
         'month' => 'date'
     ];
 

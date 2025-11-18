@@ -222,7 +222,8 @@
             <tr>
                 <th>#</th>
                 <th>Number</th>
-                <th>Land Lord</th>
+                <th>Landlord</th>
+                <th>Commission</th>
                 <th>Rooms</th>
                 <th>Rent</th>
                 <th>Tenant</th>
@@ -230,66 +231,114 @@
                 <th>Due Amount</th>
                 <th>Total Paid</th>
                 <th>Progress</th>
-                <th>Actions</th>
+                <th width="150">Actions</th>
             </tr>
         </thead>
         <tbody>
             @foreach($apartments as $apartment)
-<tr>
-    <td>{{ $apartment->number }}</td>
-    <td>{{ $apartment->landlord->name }}</td>
-    <td>{{ $apartment->landlord->commission_rate }}% commission</td>
-    <td>{{ $apartment->rooms }}</td>
-    <td>UGX {{ number_format($apartment->rent) }}</td>
-    <td>
-        @if($apartment->tenant)
-            {{ $apartment->tenant->name }}
-        @else
-            <span class="text-muted">Vacant</span>
-        @endif
-    </td>
-    <td>
-        @if($apartment->tenant)
-            @if($apartment->status === 'paid')
-                <span class="badge bg-success">Paid</span>
-            @elseif($apartment->status === 'partial')
-                <span class="badge bg-warning text-dark">Partial</span>
-            @else
-                <span class="badge bg-danger">Unpaid</span>
-            @endif
-        @else
-            <span class="badge bg-secondary">Vacant</span>
-        @endif
-    </td>
-    <td>
-        @if($apartment->tenant)
-            UGX {{ number_format($apartment->totalPaid) }} / UGX {{ number_format($apartment->rent) }}
-            @if($apartment->status === 'partial')
-                <br><small class="text-warning">Balance: UGX {{ number_format($apartment->dueAmount) }}</small>
-            @endif
-        @else
-            -
-        @endif
-    </td>
-    <td>
-        @if($apartment->tenant)
-        <div class="progress" style="height: 20px;">
-            <div class="progress-bar {{ $apartment->status === 'paid' ? 'bg-success' : 'bg-warning' }}" 
-                 style="width: {{ $apartment->progressPercentage }}%">
-            </div>
-        </div>
-        <small>{{ number_format($apartment->progressPercentage, 1) }}%</small>
-        @else
-        -
-        @endif
-    </td>
-</tr>
-@endforeach
+            <tr>
+                <td>{{ $loop->iteration }}</td>
+                <td>{{ $apartment->number }}</td>
+                <td>
+                    @if($apartment->landlord && $apartment->landlord->name)
+                        {{ $apartment->landlord->name }}
+                    @else
+                        <span class="text-danger">No Landlord Assigned</span>
+                    @endif
+                </td>
+                <td>
+                    @if($apartment->landlord && $apartment->landlord->commission_rate)
+                        {{ $apartment->landlord->commission_rate }}%
+                    @else
+                        <span class="text-muted">-</span>
+                    @endif
+                </td>
+                <td>{{ $apartment->rooms }}</td>
+                <td>UGX {{ number_format($apartment->rent) }}</td>
+                <td>
+                    @if($apartment->tenant)
+                        {{ $apartment->tenant->name }}
+                    @else
+                        <span class="text-muted">Vacant</span>
+                    @endif
+                </td>
+                <td>
+                    @if($apartment->tenant)
+                        @if($apartment->status === 'paid')
+                            <span class="badge bg-success">Paid</span>
+                        @elseif($apartment->status === 'partial')
+                            <span class="badge bg-warning text-dark">Partial</span>
+                        @else
+                            <span class="badge bg-danger">Unpaid</span>
+                        @endif
+                    @else
+                        <span class="badge bg-secondary">Vacant</span>
+                    @endif
+                </td>
+                <td>
+                    @if($apartment->tenant)
+                        UGX {{ number_format($apartment->dueAmount) }}
+                    @else
+                        -
+                    @endif
+                </td>
+                <td>
+                    @if($apartment->tenant)
+                        UGX {{ number_format($apartment->totalPaid) }}
+                    @else
+                        -
+                    @endif
+                </td>
+                <td>
+                    @if($apartment->tenant)
+                    <div class="progress" style="height: 20px;">
+                        <div class="progress-bar {{ $apartment->status === 'paid' ? 'bg-success' : ($apartment->status === 'partial' ? 'bg-warning' : 'bg-danger') }}" 
+                             style="width: {{ $apartment->progressPercentage }}%">
+                        </div>
+                    </div>
+                    <small>{{ number_format($apartment->progressPercentage, 1) }}%</small>
+                    @else
+                    -
+                    @endif
+                </td>
+                <td>
+                    <div class="btn-group btn-group-sm" role="group">
+                        {{-- Edit Button --}}
+                        <a href="{{ route('admin.apartments.edit', $apartment) }}" 
+                           class="btn btn-primary" 
+                           title="Edit Apartment">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        
+                        {{-- Payment History Button --}}
+                        <button type="button" 
+                                class="btn btn-info" 
+                                data-bs-toggle="modal" 
+                                data-bs-target="#historyModal{{ $apartment->id }}"
+                                title="Payment History">
+                            <i class="bi bi-clock-history"></i>
+                        </button>
+                        
+                        {{-- Delete Button --}}
+                        <form action="{{ route('admin.apartments.destroy', $apartment) }}" 
+                              method="POST" 
+                              class="d-inline"
+                              onsubmit="return confirm('Are you sure you want to delete this apartment? This action cannot be undone.')">
+                            @csrf
+                            @method('DELETE')
+                            <button type="submit" 
+                                    class="btn btn-danger" 
+                                    title="Delete Apartment">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            @endforeach
         </tbody>
     </table>
-</div>
-
-{{-- Payment History Modals --}}
+</div>{{-- Payment History Modals --}}
 @foreach($apartments as $apartment)
 <div class="modal fade" id="historyModal{{ $apartment->id }}" tabindex="-1" aria-labelledby="modalLabel{{ $apartment->id }}" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -312,15 +361,89 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach($apartment->payments->sortByDesc('month') as $payment)
-                        <tr>
-                            <td>{{ \Carbon\Carbon::parse($payment->month)->format('M Y') }}</td>
-                            <td>{{ number_format($payment->amount) }}</td>
-                            <td>{{ $payment->includes_gym ? 'Yes' : 'No' }}</td>
-                            <td>{{ $payment->created_at->format('d M, Y H:i') }}</td>
-                        </tr>
-                        @endforeach
-                    </tbody>
+    @foreach($apartments as $apartment)
+    <tr>
+        <td>{{ $loop->iteration }}</td>
+        <td>{{ $apartment->number }}</td>
+        <td>
+            @if($apartment->landlord && $apartment->landlord->name)
+                {{ $apartment->landlord->name }}
+            @else
+                <span class="text-danger">No Landlord Assigned</span>
+            @endif
+        </td>
+        <td>
+            @if($apartment->landlord && $apartment->landlord->commission_rate)
+                {{ $apartment->landlord->commission_rate }}% commission
+            @else
+                <span class="text-danger">-</span>
+            @endif
+        </td>
+        <td>{{ $apartment->rooms }}</td>
+        <td>UGX {{ number_format($apartment->rent) }}</td>
+        <td>
+            @if($apartment->tenant)
+                {{ $apartment->tenant->name }}
+            @else
+                <span class="text-muted">Vacant</span>
+            @endif
+        </td>
+        <td>
+            @if($apartment->tenant)
+                @if($apartment->status === 'paid')
+                    <span class="badge bg-success">Paid</span>
+                @elseif($apartment->status === 'partial')
+                    <span class="badge bg-warning text-dark">Partial</span>
+                @else
+                    <span class="badge bg-danger">Unpaid</span>
+                @endif
+            @else
+                <span class="badge bg-secondary">Vacant</span>
+            @endif
+        </td>
+        <td>
+            @if($apartment->tenant)
+                UGX {{ number_format($apartment->dueAmount) }}
+            @else
+                -
+            @endif
+        </td>
+        <td>
+            @if($apartment->tenant)
+                UGX {{ number_format($apartment->totalPaid) }}
+            @else
+                -
+            @endif
+        </td>
+        <td>
+            @if($apartment->tenant)
+            <div class="progress" style="height: 20px;">
+                <div class="progress-bar {{ $apartment->status === 'paid' ? 'bg-success' : ($apartment->status === 'partial' ? 'bg-warning' : 'bg-danger') }}" 
+                     style="width: {{ $apartment->progressPercentage }}%">
+                </div>
+            </div>
+            <small>{{ number_format($apartment->progressPercentage, 1) }}%</small>
+            @else
+            -
+            @endif
+        </td>
+        <td>
+            <div class="btn-group">
+                <a href="{{ route('admin.apartments.edit', $apartment) }}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-pencil"></i>
+                </a>
+                <form action="{{ route('admin.apartments.destroy', $apartment) }}" method="POST" class="d-inline">
+                    @csrf
+                    @method('DELETE')
+                    <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Are you sure?')">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </form>
+            </div>
+        </td>
+    </tr>
+    @endforeach
+</tbody>
                 </table>
                 @endif
             </div>

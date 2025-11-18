@@ -70,6 +70,11 @@
         .status-partial { color: #ffc107; font-weight: bold; }
         .status-unpaid { color: #dc3545; font-weight: bold; }
         .status-vacant { color: #6c757d; font-weight: bold; }
+        .small-note { 
+            font-size: 7px; 
+            color: #666; 
+            line-height: 1.1;
+        }
     </style>
 </head>
 <body>
@@ -80,17 +85,18 @@
         <p><strong>CLIENT'S NAME:</strong> {{ strtoupper($reportData['landlord']->name) }}</p>
         <p><strong>PROPERTY LOCATION:</strong> {{ $locations->implode(' and ') }}</p>
         <p><strong>COMMISSION RATE:</strong> {{ $reportData['landlord']->commission_rate }}%</p>
+        
+        <!-- Payment Status -->
+        <p><strong>PAYMENT STATUS:</strong> 
+            @if($reportData['landlordPaymentStatus']['paid'])
+                <strong style="color: #28a745;">PAID TO LANDLORD</strong>
+                ({{ \Carbon\Carbon::parse($reportData['landlordPaymentStatus']['paid_at'])->format('M j, Y') }})
+            @else
+                <strong style="color: #ffc107;">PENDING PAYMENT</strong>
+            @endif
+        </p>
     </div>
 
-    <!-- Add this to your PDF header section -->
-<p><strong>PAYMENT STATUS:</strong> 
-    @if($reportData['landlordPaymentStatus']['paid'])
-        <strong style="color: #28a745;">PAID TO LANDLORD</strong>
-        ({{ \Carbon\Carbon::parse($reportData['landlordPaymentStatus']['paid_at'])->format('M j, Y') }})
-    @else
-        <strong style="color: #ffc107;">PENDING PAYMENT</strong>
-    @endif
-</p>
     <!-- Apartments by Location -->
     @foreach($locations as $location)
         @php
@@ -120,10 +126,10 @@
             <tbody>
                 @foreach($locationApartments as $apartment)
                 @php
-                    // NEW: Use the enhanced payment status method (same as web view)
                     $paymentStatus = $apartment->getPaymentStatusForReport($reportData['month']->format('Y-m'));
                     $rentPaid = $paymentStatus['amount_paid'];
-                    $commission = $rentPaid * ($reportData['landlord']->commission_rate / 100);
+                    
+                    $commission = $rentPaid > 0 ? ($rentPaid * ($reportData['landlord']->commission_rate / 100)) : 0;
                     $amount = $rentPaid - $commission;
                     
                     $locationTotal += $rentPaid;
@@ -134,41 +140,55 @@
                     if ($paymentStatus['status'] === 'VACANT') {
                         $statusDisplay = 'VACANT';
                         $statusClass = 'status-vacant';
+                        $rentPaidDisplay = 'UGX 0';
                     } elseif ($paymentStatus['status'] === 'PAID') {
-                        if ($paymentStatus['is_advance']) {
+                        if ($paymentStatus['is_advance'] && !$paymentStatus['payment_made_this_month']) {
+                            $statusDisplay = 'ADVANCE (' . $paymentStatus['months_covered'] . ' REMAINING)';
+                            $statusClass = 'status-advance';
+                            $rentPaidDisplay = 'ADVANCE';
+                        } elseif ($paymentStatus['is_advance'] && $paymentStatus['payment_made_this_month']) {
                             $statusDisplay = $paymentStatus['months_covered'] . ' MONTH' . ($paymentStatus['months_covered'] > 1 ? 'S' : '') . ' ADVANCE';
                             $statusClass = 'status-advance';
+                            $rentPaidDisplay = 'UGX ' . number_format($rentPaid);
                         } elseif ($paymentStatus['is_partial']) {
                             $statusDisplay = 'PARTIAL (' . number_format($rentPaid) . ')';
                             $statusClass = 'status-partial';
+                            $rentPaidDisplay = 'UGX ' . number_format($rentPaid);
                         } else {
                             $statusDisplay = $reportData['month']->format('F');
                             $statusClass = '';
+                            $rentPaidDisplay = 'UGX ' . number_format($rentPaid);
                         }
                     } else {
                         $statusDisplay = 'UNPAID';
                         $statusClass = 'status-unpaid';
+                        $rentPaidDisplay = 'UGX 0';
                     }
                     
-                    // Get latest payment date for this month
-                    $latestPayment = $apartment->getPaymentsMadeInMonth($reportData['month']->format('Y-m'))->sortByDesc('created_at')->first();
+                    // Get the payment that's allocated to this month
+                    $displayPayment = $apartment->getPaymentForMonth($reportData['month']->format('Y-m'));
                 @endphp
                 <tr>
                     <td>{{ $apartment->number }}</td>
                     <td>UGX {{ number_format($apartment->rent) }}</td>
-                    <td>UGX {{ number_format($rentPaid) }}</td>
+                    <td class="{{ $statusClass }}">{{ $rentPaidDisplay }}</td>
                     <td>UGX {{ number_format($commission) }}</td>
                     <td>UGX {{ number_format($amount) }}</td>
                     <td class="{{ $statusClass }}">{{ $statusDisplay }}</td>
                     <td>
-                        @if($latestPayment)
-                            {{ $latestPayment->created_at->format('jS/m/Y') }}
+                        @if($displayPayment && $displayPayment->actual_payment_date)
+                            {{ $displayPayment->actual_payment_date->format('jS/m/Y') }}
+                            @if($displayPayment->actual_payment_date->format('Y-m-d') != $displayPayment->created_at->format('Y-m-d'))
+                                <div class="small-note">(recorded: {{ $displayPayment->created_at->format('jS/m/Y') }})</div>
+                            @endif
+                        @elseif($displayPayment)
+                            {{ $displayPayment->created_at->format('jS/m/Y') }}
                         @else
                             -
                         @endif
                     </td>
                     <td>
-                        @if($paymentStatus['is_advance'])
+                        @if($paymentStatus['is_advance'] && $paymentStatus['months_covered'] > 0)
                             {{ $reportData['month']->copy()->addMonths($paymentStatus['months_covered'])->format('F Y') }}
                         @else
                             {{ $reportData['month']->copy()->addMonth()->format('F') }}

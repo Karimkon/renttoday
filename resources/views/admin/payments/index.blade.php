@@ -122,10 +122,16 @@
     </div>
 
     @if(session('success'))
-    <div class="alert alert-success">{{ session('success') }}</div>
+    <div class="alert alert-success alert-dismissible fade show">
+        {{ session('success') }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
     @endif
     @if(session('error'))
-    <div class="alert alert-danger">{{ session('error') }}</div>
+    <div class="alert alert-danger alert-dismissible fade show">
+        {{ session('error') }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
     @endif
 
     <!-- Payments Table -->
@@ -143,9 +149,9 @@
                             <th>Amount</th>
                             <th>Method</th>
                             <th>Status</th>
-                            <th>Date Paid</th>
+                            <th>Actual Paid Date</th>
                             <th>Processed By</th>
-                            <th>Actions</th>
+                            <th width="150">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -180,22 +186,41 @@
                                 @endif
                             </td>
                             <td>
-                                @if($payment->paid_at)
-                                    {{ $payment->paid_at->format('M j, Y') }}
-                                    <br><small class="text-muted">{{ $payment->paid_at->format('g:i A') }}</small>
-                                @else
-                                    <span class="text-muted">-</span>
-                                @endif
-                            </td>
+    @if($payment->actual_payment_date)
+        {{ $payment->actual_payment_date->format('M j, Y') }}
+        @if($payment->actual_payment_date->format('Y-m-d') != $payment->created_at->format('Y-m-d'))
+            <br><small class="text-muted">(recorded: {{ $payment->created_at->format('M j, Y') }})</small>
+        @endif
+    @elseif($payment->paid_at)
+        {{ $payment->paid_at->format('M j, Y') }}
+    @else
+        <span class="text-muted">-</span>
+    @endif
+</td>
                             <td>{{ $payment->processedBy?->name ?? 'System' }}</td>
                             <td>
-                                <div class="btn-group btn-group-sm">
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <!-- View Button -->
                                     <a href="{{ route('admin.payments.show', $payment) }}" class="btn btn-info" title="View Details">
                                         <i class="bi bi-eye"></i>
                                     </a>
-                                    <a href="{{ route('admin.payments.edit', $payment) }}" class="btn btn-warning" title="Edit">
+                                    
+                                    <!-- Edit Button -->
+                                    <a href="{{ route('admin.payments.edit', $payment) }}" class="btn btn-warning" title="Edit Payment">
                                         <i class="bi bi-pencil"></i>
                                     </a>
+                                    
+                                    <!-- Delete Button -->
+                                    <form action="{{ route('admin.payments.destroy', $payment) }}" method="POST" class="d-inline">
+                                        @csrf
+                                        @method('DELETE')
+                                        <button type="submit" class="btn btn-danger" title="Delete Payment"
+                                                onclick="return confirm('Are you sure you want to delete this payment?\\n\\nTenant: {{ $payment->tenant->name }}\\nAmount: UGX {{ number_format($payment->amount) }}\\nMonth: {{ \Carbon\Carbon::parse($payment->month)->format('F Y') }}\\n\\nThis action cannot be undone!')">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+
+                                    <!-- Mark as Paid Button (only for non-paid payments) -->
                                     @if($payment->status !== 'paid')
                                     <form action="{{ route('admin.payments.mark-paid', $payment) }}" method="POST" class="d-inline">
                                         @csrf
@@ -205,7 +230,6 @@
                                         </button>
                                     </form>
                                     @endif
-                                    <!-- REMOVED DELETE BUTTON to avoid accidental deletions -->
                                 </div>
                             </td>
                         </tr>
@@ -225,3 +249,36 @@
     </div>
 </div>
 @endsection
+
+@push('scripts')
+<script>
+$(document).ready(function() {
+    // Add search enhancement for better user experience
+    $('input[name="tenant_search"], input[name="apartment_search"], input[name="landlord_search"]').on('keyup', function(e) {
+        if (e.key === 'Enter') {
+            $(this).closest('form').submit();
+        }
+    });
+
+    // Auto-submit form when month changes for quick filtering
+    $('input[name="month"]').on('change', function() {
+        if ($(this).val()) {
+            $(this).closest('form').submit();
+        }
+    });
+
+    // Confirmation for delete actions with more details
+    $('form[action*="destroy"]').on('submit', function(e) {
+        const form = $(this);
+        const paymentRow = form.closest('tr');
+        const tenantName = paymentRow.find('td:nth-child(2) strong').text();
+        const amount = paymentRow.find('td:nth-child(6)').text();
+        const month = paymentRow.find('td:nth-child(5)').text();
+        
+        if (!confirm(`Are you sure you want to delete this payment?\n\nTenant: ${tenantName}\nAmount: ${amount}\nMonth: ${month}\n\nThis action cannot be undone!`)) {
+            e.preventDefault();
+        }
+    });
+});
+</script>
+@endpush

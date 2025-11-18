@@ -163,7 +163,7 @@ Route::prefix('payments')->name('payments.')->group(function () {
     Route::post('landlords/{landlord}/mark-unpaid', [LandlordController::class, 'markPaymentUnpaid'])
         ->name('landlords.mark-unpaid');                                             
 
-
+    
     // Financial Reports
 Route::prefix('financial-reports')->name('financial-reports.')->group(function () {
     Route::get('/', [FinancialReportController::class, 'index'])->name('index');

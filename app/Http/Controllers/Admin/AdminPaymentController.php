@@ -102,8 +102,8 @@ class AdminPaymentController extends Controller
             'month' => 'required|date_format:Y-m',
             'amount' => 'required|numeric|min:1',
             'payment_method' => 'required|in:cash,pesapal,bank_transfer,mobile_money',
-            'includes_gym' => 'nullable|boolean',
             'reference_number' => 'nullable|string|max:100',
+            'actual_payment_date' => 'nullable|date',
             'notes' => 'nullable|string'
         ]);
 
@@ -125,55 +125,76 @@ class AdminPaymentController extends Controller
     /**
      * Process cash/bank/mobile money payments immediately
      */
-    private function processManualPayment($tenant, $apartment, $data)
+   // In your AdminPaymentController - update the processManualPayment method
+private function processManualPayment($tenant, $apartment, $data)
 {
     $rent = $apartment->rent;
     $totalAmount = $data['amount'];
 
-    // SIMPLE APPROACH: Create payment record with whatever amount was paid
-    // No credit balance calculations
-    
-    $paymentMonth = $data['month'] . '-01';
+    // Calculate how many full months are covered
+    $monthsCovered = floor($totalAmount / $rent);
+    $remainder = $totalAmount - ($monthsCovered * $rent);
 
-    // Check if payment already exists for this month
-    $existingPayment = Payment::where('tenant_id', $tenant->id)
-        ->whereYear('month', substr($paymentMonth, 0, 4))
-        ->whereMonth('month', substr($paymentMonth, 5, 2))
-        ->first();
+    $startMonth = Carbon::createFromFormat('Y-m', $data['month']);
+    $processedMonths = 0;
 
-    if (!$existingPayment) {
+     // Use actual payment date or current date
+    $paymentDate = $data['actual_payment_date'] ? Carbon::createFromFormat('Y-m-d', $data['actual_payment_date']) : now();
+
+    // Create payments for each covered month
+    for ($i = 0; $i < $monthsCovered; $i++) {
+        $paymentMonth = $startMonth->copy()->addMonths($i)->format('Y-m');
+
+        // Check if payment already exists for this month
+        $exists = Payment::where('tenant_id', $tenant->id)
+            ->whereYear('month', substr($paymentMonth, 0, 4))
+            ->whereMonth('month', substr($paymentMonth, 5, 2))
+            ->exists();
+
+        if (!$exists) {
+            $payment = Payment::create([
+                'tenant_id' => $tenant->id,
+                'apartment_id' => $apartment->id,
+                'month' => $paymentMonth . '-01',
+                'amount' => $rent,
+                'payment_method' => $data['payment_method'],
+                'reference_number' => $data['reference_number'],
+                'includes_gym' => $data['includes_gym'] ?? false,
+                'status' => 'paid',
+                'paid_at' => $paymentDate,
+                'actual_payment_date' => $data['actual_payment_date'] ?? $paymentDate->format('Y-m-d'),
+                'processed_by' => auth()->id(),
+                'notes' => $data['notes'] ?? ($i > 0 ? 'Advance payment' : null)
+            ]);
+
+            $processedMonths++;
+        }
+    }
+
+    // If there's a remainder, create a partial payment for the first month
+    if ($remainder > 0 && $processedMonths == 0) {
         $payment = Payment::create([
             'tenant_id' => $tenant->id,
             'apartment_id' => $apartment->id,
-            'month' => $paymentMonth,
-            'amount' => $totalAmount, // Save the actual amount paid
+            'month' => $data['month'] . '-01',
+            'amount' => $remainder,
             'payment_method' => $data['payment_method'],
             'reference_number' => $data['reference_number'],
             'includes_gym' => $data['includes_gym'] ?? false,
             'status' => 'paid',
             'paid_at' => now(),
             'processed_by' => auth()->id(),
-            'notes' => $data['notes'] ?? ($totalAmount < $rent ? 'Partial payment' : null)
+            'notes' => $data['notes'] ?? 'Partial payment'
         ]);
 
-        // Send payment confirmation SMS
-        try {
-            $this->reminderService->sendPaymentConfirmation($payment);
-        } catch (\Exception $e) {
-            Log::error('Failed to send payment confirmation SMS: ' . $e->getMessage());
-        }
+        $processedMonths = 1;
+    }
 
-        // Clear any late fees for this month
-        $this->clearLateFees($tenant->id, $data['month']);
-        
-        $message = "Payment of UGX " . number_format($totalAmount) . " recorded for " . 
-                  Carbon::createFromFormat('Y-m', $data['month'])->format('F Y');
-        
-        if ($totalAmount < $rent) {
-            $message .= " (Partial payment)";
-        }
-    } else {
-        $message = "Payment already exists for this month.";
+    $message = "Payment processed for {$processedMonths} month(s). ";
+    if ($monthsCovered > 1) {
+        $message .= "Advance payment covering {$monthsCovered} months.";
+    } elseif ($remainder > 0 && $remainder < $rent) {
+        $message .= "Partial payment of UGX " . number_format($remainder) . " recorded.";
     }
 
     return redirect()->route('admin.payments.index')
@@ -377,6 +398,7 @@ class AdminPaymentController extends Controller
             'payment_method' => 'required|in:cash,pesapal,bank_transfer,mobile_money',
             'includes_gym' => 'nullable|boolean',
             'reference_number' => 'nullable|string|max:100',
+            'actual_payment_date' => 'nullable|date',
             'status' => 'required|in:pending,paid,failed,refunded',
             'notes' => 'nullable|string' // ADDED: Allow notes editing
         ]);
@@ -412,6 +434,18 @@ class AdminPaymentController extends Controller
             $data['paid_at'] = null;
             $data['processed_by'] = null;
         }
+
+         // Handle actual payment date
+    if ($data['status'] === 'paid') {
+        $data['paid_at'] = now();
+        $data['actual_payment_date'] = $data['actual_payment_date'] ?? now()->format('Y-m-d');
+        $data['processed_by'] = auth()->id();
+    } else {
+        $data['paid_at'] = null;
+        $data['actual_payment_date'] = null;
+        $data['processed_by'] = null;
+    }
+
 
         $payment->update($data);
 

@@ -35,7 +35,7 @@ class Apartment extends Model
     }
 
     /**
-     * SIMPLE: Get payment status for report
+     * FIXED: Get payment status for report - Uses MONTH field to determine which report to show payment in
      */
     public function getPaymentStatusForReport($month)
     {
@@ -45,91 +45,133 @@ class Apartment extends Model
                 'amount_paid' => 0,
                 'is_partial' => false,
                 'is_advance' => false,
-                'months_covered' => 0
+                'months_covered' => 0,
+                'payment_made_this_month' => false
             ];
         }
 
-        // Get payment for this specific month
-        $payment = $this->getPaymentForMonth($month);
+        // 1. Check if there's a payment FOR this specific month (using the 'month' field)
+        $paymentForThisMonth = $this->getPaymentForMonth($month);
         
-        if ($payment) {
-            $isPartial = $payment->amount < $this->rent;
+        if ($paymentForThisMonth) {
+            // There's a payment specifically FOR this month
+            $totalPaidForThisMonth = $paymentForThisMonth->amount;
+            $isPartial = ($totalPaidForThisMonth < $this->rent);
+            
+            // Check if this was an advance payment (paid before this month)
+            $paymentDate = \Carbon\Carbon::parse($paymentForThisMonth->created_at);
+            $targetDate = \Carbon\Carbon::createFromFormat('Y-m', $month)->startOfMonth();
+            $wasPaidEarly = $paymentDate->lt($targetDate);
+            
             return [
                 'status' => 'PAID',
-                'amount_paid' => $payment->amount,
+                'amount_paid' => $totalPaidForThisMonth,
                 'is_partial' => $isPartial,
-                'is_advance' => false,
-                'months_covered' => 1
+                'is_advance' => false, // Not advance, it's specifically for this month
+                'months_covered' => 0,
+                'payment_made_this_month' => !$wasPaidEarly,
+                'payment_date' => $paymentForThisMonth->created_at
             ];
         }
 
-        // Check for advance payments made in this calendar month
-        $advancePayments = $this->getPaymentsMadeInMonth($month);
-        $totalAdvance = $advancePayments->sum('amount');
+        // 2. Check if covered by multi-month advance payment
+        $advanceStatus = $this->checkIfCoveredByAdvance($month);
         
-        if ($totalAdvance > 0) {
-            $monthsCovered = floor($totalAdvance / $this->rent);
-            $remainder = $totalAdvance % $this->rent;
-            
-            if ($monthsCovered > 0) {
-                return [
-                    'status' => 'PAID',
-                    'amount_paid' => $this->rent, // Show full rent for advance months
-                    'is_partial' => false,
-                    'is_advance' => true,
-                    'months_covered' => $monthsCovered
-                ];
-            } elseif ($remainder > 0) {
-                return [
-                    'status' => 'PAID', 
-                    'amount_paid' => $remainder,
-                    'is_partial' => true,
-                    'is_advance' => false,
-                    'months_covered' => 0
-                ];
-            }
+        if ($advanceStatus['is_covered']) {
+            return [
+                'status' => 'PAID',
+                'amount_paid' => 0, // ZERO - don't count money again
+                'is_partial' => false,
+                'is_advance' => true,
+                'months_covered' => $advanceStatus['months_remaining'],
+                'payment_made_this_month' => false,
+                'payment_date' => $advanceStatus['original_payment_date']
+            ];
         }
 
+        // 3. No payment found
         return [
             'status' => 'UNPAID',
             'amount_paid' => 0,
             'is_partial' => false,
             'is_advance' => false,
-            'months_covered' => 0
+            'months_covered' => 0,
+            'payment_made_this_month' => false
         ];
     }
 
     /**
-     * Get payment for specific month
+     * Check if this month is covered by a previous multi-month advance payment
      */
-    public function getPaymentForMonth($month)
+    private function checkIfCoveredByAdvance($targetMonth)
     {
-        $formats = ['Y-m', 'F Y', 'M Y'];
+        $targetDate = \Carbon\Carbon::createFromFormat('Y-m', $targetMonth)->startOfMonth();
         
-        foreach ($formats as $format) {
-            $monthString = \Carbon\Carbon::createFromFormat('Y-m', $month)->format($format);
+        // Get all payments where amount > rent (multi-month payments)
+        // that were created BEFORE this target month
+        $multiMonthPayments = $this->payments()
+            ->where('status', 'paid')
+            ->where('amount', '>', $this->rent)
+            ->whereDate('created_at', '<', $targetDate)
+            ->orderBy('created_at', 'asc')
+            ->get();
+
+        foreach ($multiMonthPayments as $payment) {
+            $paymentAmount = $payment->amount;
+            $monthsCovered = floor($paymentAmount / $this->rent);
             
-            $payment = $this->payments()
-                ->where(function($query) use ($monthString) {
-                    $query->where('month', 'like', "%{$monthString}%")
-                          ->orWhere('month', $monthString);
-                })
-                ->where('status', 'paid')
-                ->first();
+            if ($monthsCovered <= 1) continue; // Not a multi-month payment
+            
+            // Get the month field from the payment to know which month it starts covering
+            $paymentMonthField = \Carbon\Carbon::parse($payment->month)->startOfMonth();
+            
+            // Calculate which months this payment covers
+            for ($i = 0; $i < $monthsCovered; $i++) {
+                $coveredMonth = $paymentMonthField->copy()->addMonths($i);
                 
-            if ($payment) {
-                return $payment;
+                if ($coveredMonth->format('Y-m') === $targetMonth) {
+                    // This target month is covered by this advance payment
+                    $monthsRemaining = $monthsCovered - $i - 1;
+                    
+                    return [
+                        'is_covered' => true,
+                        'months_remaining' => $monthsRemaining,
+                        'original_payment_date' => $payment->created_at
+                    ];
+                }
             }
         }
-        
-        return null;
+
+        return ['is_covered' => false];
     }
 
     /**
-     * Get payments made in specific calendar month
+     * Get payment for specific month by checking the 'month' field
+     * This determines which report the payment should appear in
+     */
+    public function getPaymentForMonth($month)
+    {
+        // Parse the target month
+        $targetDate = \Carbon\Carbon::createFromFormat('Y-m', $month);
+        
+        // Look for payments where the 'month' field matches the target month
+        $payment = $this->payments()
+            ->where('status', 'paid')
+            ->whereYear('month', $targetDate->year)
+            ->whereMonth('month', $targetDate->month)
+            ->first();
+        
+        return $payment;
+    }
+
+    /**
+     * Get payments made in specific calendar month (by created_at - when money came in)
+     * This is used for "Date of Payment" column
      */
     public function getPaymentsMadeInMonth($month)
     {
+        // This method is for showing WHEN the payment was physically received
+        // Not which month it's allocated to
         $startDate = \Carbon\Carbon::createFromFormat('Y-m', $month)->startOfMonth();
         $endDate = \Carbon\Carbon::createFromFormat('Y-m', $month)->endOfMonth();
         
@@ -137,5 +179,22 @@ class Apartment extends Model
             ->whereBetween('created_at', [$startDate, $endDate])
             ->where('status', 'paid')
             ->get();
+    }
+
+    /**
+     * Get the payment that should be displayed for a month
+     * Returns the payment if it's FOR this month (based on 'month' field)
+     */
+    public function getDisplayPaymentForMonth($month)
+    {
+        $paymentStatus = $this->getPaymentStatusForReport($month);
+        
+        if (isset($paymentStatus['payment_date'])) {
+            return $this->payments()
+                ->where('created_at', $paymentStatus['payment_date'])
+                ->first();
+        }
+        
+        return null;
     }
 }
