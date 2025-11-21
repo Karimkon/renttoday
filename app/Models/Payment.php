@@ -5,6 +5,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Carbon\Carbon;
 
 class Payment extends Model
 {
@@ -23,14 +24,20 @@ class Payment extends Model
         'paid_at',
         'actual_payment_date',
         'processed_by',
-        'notes'
+        'notes',
+        'is_advance_payment',
+        'allocated_months',
+        'original_amount'
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
         'paid_at' => 'datetime',
         'actual_payment_date' => 'date',
-        'month' => 'date'
+        'month' => 'date',
+        'is_advance_payment' => 'boolean',
+        'allocated_months' => 'array',
+        'original_amount' => 'decimal:2'
     ];
 
     // Payment methods
@@ -109,4 +116,53 @@ class Payment extends Model
     {
         return $query->where('payment_method', $method);
     }
+
+    /**
+     * Get payments allocated to a specific month
+     */
+     public function scopeForMonth($query, $month)
+    {
+        $monthFormatted = Carbon::createFromFormat('Y-m', $month)->format('Y-m');
+        
+        return $query->where(function($q) use ($monthFormatted) {
+            // Payment's month field matches
+            $q->whereRaw("DATE_FORMAT(month, '%Y-%m') = ?", [$monthFormatted])
+              // OR payment's allocated_months contains this month
+              ->orWhereJsonContains('allocated_months', $monthFormatted);
+        });
+    }
+
+    /**
+     * Check if this payment covers a specific month
+     */
+     public function coversMonth($month)
+    {
+        $monthFormatted = Carbon::createFromFormat('Y-m', $month)->format('Y-m');
+        
+        // Direct match with payment's month field
+        if ($this->month->format('Y-m') === $monthFormatted) {
+            return true;
+        }
+        
+        // Check allocated months for advance payments
+        if ($this->is_advance_payment && $this->allocated_months) {
+            return in_array($monthFormatted, $this->allocated_months);
+        }
+        
+        return false;
+    }
+
+    /**
+     * Get the amount allocated to a specific month
+     */
+     public function getAmountForMonth($month)
+    {
+        if (!$this->coversMonth($month)) {
+            return 0;
+        }
+        
+        // Always return the actual payment amount for this month
+        return $this->amount;
+    }
+
 }

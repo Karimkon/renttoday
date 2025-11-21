@@ -75,6 +75,11 @@
             color: #666; 
             line-height: 1.1;
         }
+        .advance-note {
+            font-size: 7px;
+            color: #17a2b8;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -129,33 +134,41 @@
                     $paymentStatus = $apartment->getPaymentStatusForReport($reportData['month']->format('Y-m'));
                     $rentPaid = $paymentStatus['amount_paid'];
                     
-                    $commission = $rentPaid > 0 ? ($rentPaid * ($reportData['landlord']->commission_rate / 100)) : 0;
+                    // Calculate commission only if money was actually collected this month
+                    $commission = ($rentPaid > 0 && $paymentStatus['payment_made_this_month']) 
+                        ? ($rentPaid * ($reportData['landlord']->commission_rate / 100)) 
+                        : 0;
                     $amount = $rentPaid - $commission;
                     
-                    $locationTotal += $rentPaid;
-                    $locationCommission += $commission;
-                    $locationAmount += $amount;
+                    // UPDATE: Only add to location totals if payment was made this month
+                    if ($paymentStatus['payment_made_this_month']) {
+                        $locationTotal += $rentPaid;
+                        $locationCommission += $commission;
+                        $locationAmount += $amount;
+                    }
                     
-                    // Enhanced status display
+                    // Enhanced status display with advance payment tracking
                     if ($paymentStatus['status'] === 'VACANT') {
                         $statusDisplay = 'VACANT';
                         $statusClass = 'status-vacant';
                         $rentPaidDisplay = 'UGX 0';
                     } elseif ($paymentStatus['status'] === 'PAID') {
                         if ($paymentStatus['is_advance'] && !$paymentStatus['payment_made_this_month']) {
-                            $statusDisplay = 'ADVANCE (' . $paymentStatus['months_covered'] . ' REMAINING)';
+                            // This month is covered by advance payment made earlier
+                            $statusDisplay = 'ADVANCE COVERED (' . $paymentStatus['months_covered'] . ' months remaining)';
                             $statusClass = 'status-advance';
                             $rentPaidDisplay = 'ADVANCE';
                         } elseif ($paymentStatus['is_advance'] && $paymentStatus['payment_made_this_month']) {
-                            $statusDisplay = $paymentStatus['months_covered'] . ' MONTH' . ($paymentStatus['months_covered'] > 1 ? 'S' : '') . ' ADVANCE';
+                            // Advance payment was made this month
+                            $statusDisplay = $paymentStatus['months_covered'] . ' MONTH' . ($paymentStatus['months_covered'] > 1 ? 'S' : '') . ' ADVANCE PAID';
                             $statusClass = 'status-advance';
                             $rentPaidDisplay = 'UGX ' . number_format($rentPaid);
                         } elseif ($paymentStatus['is_partial']) {
-                            $statusDisplay = 'PARTIAL (' . number_format($rentPaid) . ')';
+                            $statusDisplay = 'PARTIAL - UGX ' . number_format($rentPaid);
                             $statusClass = 'status-partial';
                             $rentPaidDisplay = 'UGX ' . number_format($rentPaid);
                         } else {
-                            $statusDisplay = $reportData['month']->format('F');
+                            $statusDisplay = $reportData['month']->format('F') . ' PAID';
                             $statusClass = '';
                             $rentPaidDisplay = 'UGX ' . number_format($rentPaid);
                         }
@@ -176,13 +189,14 @@
                     <td>UGX {{ number_format($amount) }}</td>
                     <td class="{{ $statusClass }}">{{ $statusDisplay }}</td>
                     <td>
-                        @if($displayPayment && $displayPayment->actual_payment_date)
-                            {{ $displayPayment->actual_payment_date->format('jS/m/Y') }}
-                            @if($displayPayment->actual_payment_date->format('Y-m-d') != $displayPayment->created_at->format('Y-m-d'))
+                        @if($displayPayment)
+                            {{ $displayPayment->actual_payment_date ? $displayPayment->actual_payment_date->format('jS/m/Y') : $displayPayment->created_at->format('jS/m/Y') }}
+                            @if($displayPayment->is_advance_payment)
+                                <div class="advance-note">(Advance Payment)</div>
+                            @endif
+                            @if($displayPayment->actual_payment_date && $displayPayment->actual_payment_date->format('Y-m-d') != $displayPayment->created_at->format('Y-m-d'))
                                 <div class="small-note">(recorded: {{ $displayPayment->created_at->format('jS/m/Y') }})</div>
                             @endif
-                        @elseif($displayPayment)
-                            {{ $displayPayment->created_at->format('jS/m/Y') }}
                         @else
                             -
                         @endif
@@ -224,6 +238,21 @@
             <tr>
                 <td><strong>Amount Due to Landlord:</strong></td>
                 <td class="text-right"><strong>UGX {{ number_format($reportData['amountDue']) }}</strong></td>
+            </tr>
+        </table>
+        
+        <!-- Payment Status in PDF -->
+        <table style="width: 100%; margin-top: 10px;">
+            <tr>
+                <td><strong>Payment Status:</strong></td>
+                <td class="text-right">
+                    @if($reportData['landlordPaymentStatus']['paid'])
+                        <strong style="color: #28a745;">✓ PAID TO LANDLORD</strong>
+                        <br><small style="color: #666;">Paid on: {{ \Carbon\Carbon::parse($reportData['landlordPaymentStatus']['paid_at'])->format('M j, Y g:i A') }}</small>
+                    @else
+                        <strong style="color: #ffc107;">⏳ PENDING PAYMENT</strong>
+                    @endif
+                </td>
             </tr>
         </table>
     </div>

@@ -211,6 +211,57 @@
     </div>
 </div>
 
+{{-- Export Buttons Section --}}
+<div class="card shadow-sm mb-4 bg-light">
+    <div class="card-body">
+        <div class="row align-items-center">
+            <div class="col-md-6">
+                <h6 class="mb-2">
+                    <i class="bi bi-file-earmark-arrow-down"></i> 
+                    Export {{ ucfirst($statusFilter ?? 'All') }} Apartments
+                </h6>
+                <p class="text-muted mb-0 small">
+                    Export current filtered view to PDF or Excel
+                </p>
+            </div>
+            <div class="col-md-6 text-md-end">
+                <div class="btn-group" role="group">
+                    {{-- Export to PDF --}}
+                    <a href="{{ route('admin.apartments.export.pdf', request()->query()) }}" 
+                       class="btn btn-danger" 
+                       target="_blank">
+                        <i class="bi bi-file-pdf"></i> Export to PDF
+                    </a>
+                    
+                    {{-- Export to Excel (CSV) --}}
+                    <a href="{{ route('admin.apartments.export.excel', request()->query()) }}" 
+                       class="btn btn-success">
+                        <i class="bi bi-file-earmark-spreadsheet"></i> Export to Excel
+                    </a>
+                    
+                    {{-- Print Button --}}
+                    <button onclick="window.print()" class="btn btn-secondary">
+                        <i class="bi bi-printer"></i> Print
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        {{-- Show count of items being exported --}}
+        @if($apartments->total() > 0)
+        <div class="alert alert-info mt-3 mb-0 py-2">
+            <small>
+                <i class="bi bi-info-circle"></i> 
+                <strong>{{ $apartments->total() }}</strong> apartments match your current filters
+                @if($statusFilter)
+                    (Status: <strong>{{ ucfirst($statusFilter) }}</strong>)
+                @endif
+            </small>
+        </div>
+        @endif
+    </div>
+</div>
+
 @if(session('success'))
     <div class="alert alert-success shadow-sm">{{ session('success') }}</div>
 @endif
@@ -235,9 +286,9 @@
             </tr>
         </thead>
         <tbody>
-            @foreach($apartments as $apartment)
+            @foreach($apartments as $index => $apartment)
             <tr>
-                <td>{{ $loop->iteration }}</td>
+                <td>{{ $apartments->firstItem() + $index }}</td>
                 <td>{{ $apartment->number }}</td>
                 <td>
                     @if($apartment->landlord && $apartment->landlord->name)
@@ -338,6 +389,56 @@
             @endforeach
         </tbody>
     </table>
+</div>
+
+{{-- Pagination --}}
+@if($apartments->hasPages())
+<div class="d-flex justify-content-between align-items-center mt-4">
+    <div class="text-muted">
+        Showing {{ $apartments->firstItem() }} to {{ $apartments->lastItem() }} of {{ $apartments->total() }} results
+    </div>
+    
+    <nav aria-label="Apartments pagination">
+        <ul class="pagination mb-0">
+            {{-- Previous Page Link --}}
+            @if($apartments->onFirstPage())
+                <li class="page-item disabled">
+                    <span class="page-link">&laquo; Previous</span>
+                </li>
+            @else
+                <li class="page-item">
+                    <a class="page-link" href="{{ $apartments->previousPageUrl() }}" rel="prev">&laquo; Previous</a>
+                </li>
+            @endif
+
+            {{-- Pagination Elements --}}
+            @foreach($apartments->links()->elements[0] as $page => $url)
+                @if($page == $apartments->currentPage())
+                    <li class="page-item active">
+                        <span class="page-link">{{ $page }}</span>
+                    </li>
+                @else
+                    <li class="page-item">
+                        <a class="page-link" href="{{ $url }}">{{ $page }}</a>
+                    </li>
+                @endif
+            @endforeach
+
+            {{-- Next Page Link --}}
+            @if($apartments->hasMorePages())
+                <li class="page-item">
+                    <a class="page-link" href="{{ $apartments->nextPageUrl() }}" rel="next">Next &raquo;</a>
+                </li>
+            @else
+                <li class="page-item disabled">
+                    <span class="page-link">Next &raquo;</span>
+                </li>
+            @endif
+        </ul>
+    </nav>
+</div>
+@endif
+
 </div>{{-- Payment History Modals --}}
 @foreach($apartments as $apartment)
 <div class="modal fade" id="historyModal{{ $apartment->id }}" tabindex="-1" aria-labelledby="modalLabel{{ $apartment->id }}" aria-hidden="true">

@@ -180,7 +180,11 @@ Route::prefix('financial-reports')->name('financial-reports.')->group(function (
     Route::delete('/expenses/{expense}', [FinancialReportController::class, 'destroyExpense'])->name('expenses.destroy');
 });
 
-
+ // Apartment Export Routes
+    Route::get('apartments/export/pdf', [App\Http\Controllers\Admin\AdminApartmentController::class, 'exportPdf'])
+         ->name('apartments.export.pdf');
+    Route::get('apartments/export/excel', [App\Http\Controllers\Admin\AdminApartmentController::class, 'exportExcel'])
+         ->name('apartments.export.excel');
 });
 
 
