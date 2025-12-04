@@ -122,137 +122,129 @@ class AdminPaymentController extends Controller
         }
     }
 
-  private function processManualPayment($tenant, $apartment, $data)
-    {
-        $rent = $apartment->rent;
-        $totalAmount = $data['amount'];
-        $paymentDate = $data['actual_payment_date'] 
-            ? Carbon::createFromFormat('Y-m-d', $data['actual_payment_date']) 
-            : now();
-        $targetMonth = $data['month'];
-        $startMonth = Carbon::createFromFormat('Y-m', $targetMonth);
+private function processManualPayment($tenant, $apartment, $data)
+{
+    $rent = $apartment->rent;
+    $totalAmount = $data['amount'];
+    $paymentDate = $data['actual_payment_date'] 
+        ? Carbon::createFromFormat('Y-m-d', $data['actual_payment_date']) 
+        : now();
+    $targetMonth = $data['month'];
+    $startMonth = Carbon::createFromFormat('Y-m', $targetMonth);
 
-        // Calculate full months and remainder
-        $fullMonths = floor($totalAmount / $rent);
-        $remainder = $totalAmount % $rent;
+    // Log the input for debugging
+    \Log::info('=== PAYMENT PROCESSING START ===');
+    \Log::info('Tenant: ' . $tenant->name);
+    \Log::info('Apartment: ' . $apartment->number);
+    \Log::info('Rent: ' . number_format($rent));
+    \Log::info('Total Amount: ' . number_format($totalAmount));
+    \Log::info('Target Month: ' . $targetMonth);
 
-        $createdPayments = [];
-        $message = "";
+    // Calculate full months and remainder
+    $fullMonths = floor($totalAmount / $rent);
+    $remainder = $totalAmount - ($fullMonths * $rent); // Better calculation
 
-        // Case 1: Payment covers 2+ full months (Advance Payment)
-        if ($fullMonths >= 2) {
-            // Prepare allocated months array once
-            $allocatedMonths = array_map(function($j) use ($startMonth, $fullMonths) {
-                return $startMonth->copy()->addMonths($j)->format('Y-m');
-            }, range(0, $fullMonths - 1));
-            
-            // Create individual payment records for each month
-            for ($i = 0; $i < $fullMonths; $i++) {
-                $monthToAllocate = $startMonth->copy()->addMonths($i);
-                
-                $payment = Payment::create([
-                    'tenant_id' => $tenant->id,
-                    'apartment_id' => $apartment->id,
-                    'month' => $monthToAllocate->format('Y-m') . '-01',
-                    'amount' => $rent,
-                    'original_amount' => $totalAmount, // Store FULL amount paid (e.g., 740,000)
-                    'payment_method' => $data['payment_method'],
-                    'reference_number' => $data['reference_number'] ?? null,
-                    'status' => 'paid',
-                    'paid_at' => $paymentDate,
-                    'actual_payment_date' => $data['actual_payment_date'] ?? $paymentDate->format('Y-m-d'),
-                    'processed_by' => auth()->id(),
-                    'notes' => $data['notes'] ?? "Advance payment - Month " . ($i + 1) . " of {$fullMonths}",
-                    'is_advance_payment' => true,
-                    'allocated_months' => $allocatedMonths
-                ]);
-                
-                $createdPayments[] = $payment;
-            }
-            
-            $message = "Advance payment processed: {$fullMonths} months paid (UGX " . number_format($fullMonths * $rent) . ")";
-            
-            // Handle remainder as partial payment for next month
-            if ($remainder > 0) {
-                $nextMonth = $startMonth->copy()->addMonths($fullMonths);
-                
-                $partialPayment = Payment::create([
-                    'tenant_id' => $tenant->id,
-                    'apartment_id' => $apartment->id,
-                    'month' => $nextMonth->format('Y-m') . '-01',
-                    'amount' => $remainder,
-                    'payment_method' => $data['payment_method'],
-                    'reference_number' => $data['reference_number'] ?? null,
-                    'status' => 'paid',
-                    'paid_at' => $paymentDate,
-                    'actual_payment_date' => $data['actual_payment_date'] ?? $paymentDate->format('Y-m-d'),
-                    'processed_by' => auth()->id(),
-                    'notes' => $data['notes'] ?? "Partial payment for " . $nextMonth->format('F Y'),
-                    'is_advance_payment' => false,
-                    'allocated_months' => null
-                ]);
-                
-                $createdPayments[] = $partialPayment;
-                $message .= " + UGX " . number_format($remainder) . " partial for " . $nextMonth->format('F Y');
-            }
+    \Log::info('Full Months: ' . $fullMonths);
+    \Log::info('Remainder: ' . number_format($remainder));
+
+    $createdPayments = [];
+    $message = "";
+
+    // Create separate payments for EACH month
+    $currentMonth = $startMonth->copy();
+    
+    // 1. Create full month payments
+    for ($i = 0; $i < $fullMonths; $i++) {
+        $paymentMonth = $currentMonth->copy()->addMonths($i);
+        
+        \Log::info('Creating payment for month ' . ($i + 1) . ': ' . $paymentMonth->format('F Y'));
+        
+        $payment = Payment::create([
+            'tenant_id' => $tenant->id,
+            'apartment_id' => $apartment->id,
+            'month' => $paymentMonth->format('Y-m') . '-01',
+            'amount' => $rent,
+            'payment_method' => $data['payment_method'],
+            'reference_number' => $data['reference_number'] ?? null,
+            'status' => 'paid',
+            'paid_at' => $paymentDate,
+            'actual_payment_date' => $data['actual_payment_date'] ?? $paymentDate->format('Y-m-d'),
+            'processed_by' => auth()->id(),
+            'notes' => $fullMonths > 1 ? 
+                "Part of advance payment: UGX " . number_format($totalAmount) . " for " . $fullMonths . " months" : 
+                ($data['notes'] ?? null),
+            'is_advance_payment' => $fullMonths > 1,
+            'original_amount' => $fullMonths > 1 ? $totalAmount : null
+        ]);
+        
+        $createdPayments[] = $payment;
+        \Log::info('Created payment ID: ' . $payment->id . ' for ' . $paymentMonth->format('F Y'));
+    }
+    
+    // 2. Create partial payment for remainder (if any)
+    if ($remainder > 0) {
+        $partialMonth = $currentMonth->copy()->addMonths($fullMonths);
+        
+        \Log::info('Creating partial payment for: ' . $partialMonth->format('F Y') . ' Amount: ' . number_format($remainder));
+        
+        $partialPayment = Payment::create([
+            'tenant_id' => $tenant->id,
+            'apartment_id' => $apartment->id,
+            'month' => $partialMonth->format('Y-m') . '-01',
+            'amount' => $remainder,
+            'payment_method' => $data['payment_method'],
+            'reference_number' => $data['reference_number'] ?? null,
+            'status' => 'paid',
+            'paid_at' => $paymentDate,
+            'actual_payment_date' => $data['actual_payment_date'] ?? $paymentDate->format('Y-m-d'),
+            'processed_by' => auth()->id(),
+            'notes' => "Partial payment from advance of UGX " . number_format($totalAmount),
+            'is_advance_payment' => false
+        ]);
+        
+        $createdPayments[] = $partialPayment;
+        \Log::info('Created partial payment ID: ' . $partialPayment->id);
+    }
+    
+    \Log::info('Total payments created: ' . count($createdPayments));
+
+    // Build success message
+    if ($fullMonths >= 2) {
+        $message = "✅ ADVANCE PAYMENT PROCESSED: {$fullMonths} months paid in advance";
+        if ($remainder > 0) {
+            $nextMonth = $startMonth->copy()->addMonths($fullMonths);
+            $message .= " + UGX " . number_format($remainder) . " partial for " . $nextMonth->format('F Y');
         }
-        // Case 2: Payment covers exactly 1 month
-        elseif ($fullMonths == 1 && $remainder == 0) {
-            $payment = Payment::create([
-                'tenant_id' => $tenant->id,
-                'apartment_id' => $apartment->id,
-                'month' => $startMonth->format('Y-m') . '-01',
-                'amount' => $rent,
-                'payment_method' => $data['payment_method'],
-                'reference_number' => $data['reference_number'] ?? null,
-                'status' => 'paid',
-                'paid_at' => $paymentDate,
-                'actual_payment_date' => $data['actual_payment_date'] ?? $paymentDate->format('Y-m-d'),
-                'processed_by' => auth()->id(),
-                'notes' => $data['notes'],
-                'is_advance_payment' => false,
-                'allocated_months' => null
-            ]);
-            
-            $createdPayments[] = $payment;
-            $message = "Payment processed for " . $startMonth->format('F Y');
+        
+        // List all created months
+        $monthList = [];
+        foreach ($createdPayments as $p) {
+            $month = Carbon::parse($p->month)->format('F Y');
+            $amount = number_format($p->amount);
+            $monthList[] = "{$month}: UGX {$amount}";
         }
-        // Case 3: Payment is less than 1 month (Partial payment)
-        else {
-            $payment = Payment::create([
-                'tenant_id' => $tenant->id,
-                'apartment_id' => $apartment->id,
-                'month' => $startMonth->format('Y-m') . '-01',
-                'amount' => $totalAmount,
-                'payment_method' => $data['payment_method'],
-                'reference_number' => $data['reference_number'] ?? null,
-                'status' => 'paid',
-                'paid_at' => $paymentDate,
-                'actual_payment_date' => $data['actual_payment_date'] ?? $paymentDate->format('Y-m-d'),
-                'processed_by' => auth()->id(),
-                'notes' => $data['notes'] ?? 'Partial payment',
-                'is_advance_payment' => false,
-                'allocated_months' => null
-            ]);
-            
-            $createdPayments[] = $payment;
-            $message = "Partial payment of UGX " . number_format($totalAmount) . " recorded for " . $startMonth->format('F Y');
-        }
-
-        // Send SMS for first payment only
-        if (!empty($createdPayments) && isset($data['send_sms']) && $data['send_sms']) {
-            try {
-                $this->reminderService->sendPaymentConfirmation($createdPayments[0]);
-            } catch (\Exception $e) {
-                Log::error('Failed to send payment confirmation SMS: ' . $e->getMessage());
-            }
-        }
-
-        return redirect()->route('admin.payments.index')
-                         ->with('success', $message);
+        $message .= "\n\n📅 Payment Breakdown:\n" . implode("\n", $monthList);
+        
+    } elseif ($fullMonths == 1 && $remainder == 0) {
+        $message = "✅ Payment processed for " . $startMonth->format('F Y');
+    } elseif ($fullMonths == 1 && $remainder > 0) {
+        $message = "✅ Payment processed: 1 month + UGX " . number_format($remainder) . " partial advance";
+    } elseif ($fullMonths == 0 && $remainder > 0) {
+        $message = "✅ Partial payment of UGX " . number_format($totalAmount) . " recorded for " . $startMonth->format('F Y');
     }
 
+    // Send SMS for first payment only
+    if (!empty($createdPayments) && isset($data['send_sms']) && $data['send_sms']) {
+        try {
+            $this->reminderService->sendPaymentConfirmation($createdPayments[0]);
+        } catch (\Exception $e) {
+            Log::error('Failed to send payment confirmation SMS: ' . $e->getMessage());
+        }
+    }
 
+    return redirect()->route('admin.payments.index')
+                     ->with('success', $message);
+}
 
     /**
      * Process partial payments to complete rent
@@ -495,74 +487,101 @@ class AdminPaymentController extends Controller
     }
 
     public function edit(Payment $payment)
-    {
-        $tenants = Tenant::with('apartment')->get();
-        return view('admin.payments.edit', compact('payment', 'tenants'));
+{
+    $tenants = Tenant::with('apartment')->get();
+    
+    // If this is an advance payment, get the original amount for display
+    if ($payment->is_advance_payment) {
+        $originalAmount = $payment->original_amount;
+        if ($originalAmount && $originalAmount > $payment->amount) {
+            // Show the original full amount in the form
+            $payment->original_amount_display = $originalAmount;
+        }
+    }
+    
+    return view('admin.payments.edit', compact('payment', 'tenants'));
+}
+
+public function update(Request $request, Payment $payment)
+{
+    $data = $request->validate([
+        'tenant_id' => 'required|exists:tenants,id',
+        'month' => 'required|date_format:Y-m',
+        'amount' => 'required|numeric|min:1',
+        'original_amount' => 'nullable|numeric|min:1', // For advance payments
+        'payment_method' => 'required|in:cash,pesapal,bank_transfer,mobile_money',
+        'reference_number' => 'nullable|string|max:100',
+        'actual_payment_date' => 'nullable|date',
+        'status' => 'required|in:pending,paid,failed,refunded',
+        'notes' => 'nullable|string',
+        'is_advance_payment' => 'nullable|boolean',
+        'allocated_months' => 'nullable|array' // For advance payments
+    ]);
+
+    $tenant = Tenant::with('apartment')->findOrFail($data['tenant_id']);
+    
+    if (!$tenant->apartment) {
+        return back()->with('error', 'Selected tenant is not assigned to any apartment.');
     }
 
-    public function update(Request $request, Payment $payment)
-    {
-        $data = $request->validate([
-            'tenant_id' => 'required|exists:tenants,id',
-            'month' => 'required|date_format:Y-m',
-            'amount' => 'required|numeric|min:1',
-            'payment_method' => 'required|in:cash,pesapal,bank_transfer,mobile_money',
-            'includes_gym' => 'nullable|boolean',
-            'reference_number' => 'nullable|string|max:100',
-            'actual_payment_date' => 'nullable|date',
-            'status' => 'required|in:pending,paid,failed,refunded',
-            'notes' => 'nullable|string' // ADDED: Allow notes editing
-        ]);
+    $data['apartment_id'] = $tenant->apartment->id;
+    $data['month'] = $data['month'] . '-01';
 
-        $tenant = Tenant::with('apartment')->findOrFail($data['tenant_id']);
-        
-        if (!$tenant->apartment) {
-            return back()->with('error', 'Selected tenant is not assigned to any apartment.');
-        }
-
-        $data['apartment_id'] = $tenant->apartment->id;
-        $data['month'] = $data['month'] . '-01';
-
-        // Track if status is changing to paid
-        $wasPaid = $payment->status === 'paid';
-        $isNowPaid = $data['status'] === 'paid';
-
-        // If marking as paid and it wasn't paid before, set paid_at timestamp
-        if ($isNowPaid && !$wasPaid) {
-            $data['paid_at'] = now();
-            $data['processed_by'] = auth()->id();
+    // Handle advance payment fields
+    if ($request->has('is_advance_payment') && $request->is_advance_payment) {
+        // For advance payments, we need to handle allocation
+        if ($request->has('original_amount') && $request->original_amount) {
+            $data['original_amount'] = $request->original_amount;
+            $data['is_advance_payment'] = true;
             
-            // Send payment confirmation SMS only if it's a new payment
+            // Calculate how many months this advance covers
+            $rent = $tenant->apartment->rent;
+            $fullMonths = floor($request->original_amount / $rent);
+            
+            // Auto-allocate months if not provided
+            if (!$request->filled('allocated_months') && $fullMonths > 0) {
+                $startMonth = Carbon::createFromFormat('Y-m', $request->month);
+                $allocatedMonths = [];
+                
+                for ($i = 0; $i < $fullMonths; $i++) {
+                    $allocatedMonths[] = $startMonth->copy()->addMonths($i)->format('Y-m');
+                }
+                
+                $data['allocated_months'] = $allocatedMonths;
+            }
+        }
+    } else {
+        // Regular payment - clear advance fields
+        $data['original_amount'] = null;
+        $data['is_advance_payment'] = false;
+        $data['allocated_months'] = null;
+    }
+
+    // Handle payment status and dates
+    if ($data['status'] === 'paid') {
+        $data['paid_at'] = now();
+        $data['actual_payment_date'] = $data['actual_payment_date'] ?? now()->format('Y-m-d');
+        $data['processed_by'] = auth()->id();
+        
+        // If marking as paid now, send SMS
+        if ($payment->status !== 'paid') {
             try {
                 $this->reminderService->sendPaymentConfirmation($payment);
             } catch (\Exception $e) {
                 Log::error('Failed to send payment confirmation SMS: ' . $e->getMessage());
             }
         }
-
-        // If changing from paid to another status, clear paid_at
-        if ($wasPaid && !$isNowPaid) {
-            $data['paid_at'] = null;
-            $data['processed_by'] = null;
-        }
-
-         // Handle actual payment date
-    if ($data['status'] === 'paid') {
-        $data['paid_at'] = now();
-        $data['actual_payment_date'] = $data['actual_payment_date'] ?? now()->format('Y-m-d');
-        $data['processed_by'] = auth()->id();
     } else {
         $data['paid_at'] = null;
         $data['actual_payment_date'] = null;
         $data['processed_by'] = null;
     }
 
+    $payment->update($data);
 
-        $payment->update($data);
-
-        return redirect()->route('admin.payments.index')
-                         ->with('success', 'Payment updated successfully.');
-    }
+    return redirect()->route('admin.payments.index')
+                     ->with('success', 'Payment updated successfully.');
+}
 
     public function destroy(Payment $payment)
     {

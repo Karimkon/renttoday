@@ -116,32 +116,61 @@
     </div>
 </div>
 
-                <div class="mb-3">
-                    <label class="form-label">Notes</label>
-                    <textarea name="notes" class="form-control" rows="3" 
-                              placeholder="Any additional notes about this payment">{{ old('notes',$payment->notes) }}</textarea>
-                    @error('notes')
-                        <div class="text-danger small">{{ $message }}</div>
-                    @enderror
-                </div>
-
-                <div class="d-flex justify-content-between align-items-center">
-                    <div>
-                        <button type="submit" class="btn btn-success">
-                            <i class="bi bi-check-circle"></i> Update Payment
-                        </button>
-                        <a href="{{ route('admin.payments.index') }}" class="btn btn-outline-secondary ms-2">Cancel</a>
-                    </div>
-                    
-                    <div class="text-muted small">
-                        Created: {{ $payment->created_at->format('M j, Y g:i A') }}
-                        @if($payment->updated_at != $payment->created_at)
-                        <br>Last Updated: {{ $payment->updated_at->format('M j, Y g:i A') }}
-                        @endif
-                    </div>
-                </div>
-            </form>
+              {{-- In resources/views/admin/payments/edit.blade.php --}}
+<!-- Add these fields for advance payments -->
+<div class="row mb-3">
+    <div class="col-md-6">
+        <div class="form-check">
+            <input type="checkbox" name="is_advance_payment" value="1" 
+                   class="form-check-input" id="isAdvancePayment"
+                   {{ $payment->is_advance_payment ? 'checked' : '' }}>
+            <label class="form-check-label" for="isAdvancePayment">
+                <strong>This is an advance payment</strong>
+            </label>
         </div>
     </div>
 </div>
-@endsection
+
+<!-- Original Amount (for advance payments) -->
+<div class="row mb-3" id="originalAmountField" style="display: {{ $payment->is_advance_payment ? 'block' : 'none' }};">
+    <div class="col-md-6">
+        <label class="form-label fw-semibold">Original Amount Paid</label>
+        <input type="number" name="original_amount" class="form-control" 
+               value="{{ $payment->original_amount_display ?? $payment->original_amount ?? $payment->amount }}">
+        <small class="text-muted">The full amount the tenant actually paid (e.g., 650,000 for 2 months + partial)</small>
+    </div>
+</div>
+
+<!-- Allocated Months (for advance payments) -->
+<div class="row mb-3" id="allocatedMonthsField" style="display: {{ $payment->is_advance_payment ? 'block' : 'none' }};">
+    <div class="col-md-12">
+        <label class="form-label fw-semibold">Months Covered by this Advance</label>
+        @if($payment->allocated_months)
+            <div class="alert alert-info">
+                <strong>Currently allocated to:</strong><br>
+                @foreach($payment->allocated_months as $month)
+                    {{ \Carbon\Carbon::createFromFormat('Y-m', $month)->format('F Y') }}<br>
+                @endforeach
+            </div>
+        @endif
+        <small class="text-muted">System will automatically allocate based on rent amount</small>
+    </div>
+</div>
+
+@push('scripts')
+<script>
+// Toggle advance payment fields
+document.getElementById('isAdvancePayment').addEventListener('change', function() {
+    const originalAmountField = document.getElementById('originalAmountField');
+    const allocatedMonthsField = document.getElementById('allocatedMonthsField');
+    
+    if (this.checked) {
+        originalAmountField.style.display = 'block';
+        allocatedMonthsField.style.display = 'block';
+    } else {
+        originalAmountField.style.display = 'none';
+        allocatedMonthsField.style.display = 'none';
+    }
+});
+</script>
+@endpush

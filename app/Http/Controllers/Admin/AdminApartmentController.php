@@ -20,6 +20,11 @@ class AdminApartmentController extends Controller
         $landlordFilter = $request->landlord_id ?? null;
         $locationFilter = $request->location ?? null;
 
+        $selectedMonth = Carbon::createFromFormat('Y-m', $month);
+        $previousMonth = $selectedMonth->copy()->subMonth()->format('Y-m');
+        $expectedRentTotal = 0;
+        $previousMonthExpectedRent = 0;
+
         // Build base query with relationships
         $query = Apartment::with(['tenant', 'payments', 'landlord']);
 
@@ -82,28 +87,58 @@ class AdminApartmentController extends Controller
         $locations = Apartment::distinct()->pluck('location');
 
         // Transform each apartment with payment status
-        $allApartments->transform(function ($apt) use ($month) {
-            $paymentStatus = $apt->getPaymentStatusForReport($month);
-            
-            $apt->totalPaid = $paymentStatus['amount_paid'];
-            $apt->dueAmount = max(0, $apt->rent - $apt->totalPaid);
+        // Transform each apartment with payment status
+  // Transform each apartment with payment status
+$allApartments->transform(function ($apt) use ($month, $selectedMonth, &$expectedRentTotal) {
+    $paymentStatus = $apt->getPaymentStatusForReport($month);
+    
+    $apt->totalPaid = $paymentStatus['amount_paid'];
+    $apt->dueAmount = max(0, $apt->rent - $apt->totalPaid);
+    
+    // Calculate expected rent for this apartment in the selected month
+    $apt->expectedRent = $apt->calculateExpectedRent($selectedMonth);
+    $expectedRentTotal += $apt->expectedRent;
+    
+    // Calculate expected rent for previous month (for comparison)
+    $previousMonth = $selectedMonth->copy()->subMonth();
+    $apt->previousMonthExpectedRent = $apt->calculateExpectedRent($previousMonth);
 
-            if (!$apt->tenant) {
-                $apt->status = 'empty';
-                $apt->progressPercentage = 0;
-            } else {
-                $apt->progressPercentage = min(100, ($apt->totalPaid / max(1, $apt->rent)) * 100);
-                
-                if ($paymentStatus['status'] === 'PAID') {
-                    $apt->status = $paymentStatus['is_partial'] ? 'partial' : 'paid';
-                } else {
-                    $apt->status = 'unpaid';
-                }
-            }
+    // ADD THIS: Calculate commission
+    $apt->expectedCommission = 0;
+    $apt->collectedCommission = 0;
+    
+    if ($apt->landlord && $apt->landlord->commission_rate) {
+        // Calculate expected commission based on expected rent
+        $apt->expectedCommission = $apt->expectedRent * ($apt->landlord->commission_rate / 100);
+        
+        // Calculate collected commission based on actual payments
+        $apt->collectedCommission = $apt->totalPaid * ($apt->landlord->commission_rate / 100);
+    }
 
-            return $apt;
-        });
+    if (!$apt->tenant) {
+        $apt->status = 'empty';
+        $apt->progressPercentage = 0;
+    } else {
+        $apt->progressPercentage = min(100, ($apt->totalPaid / max(1, $apt->rent)) * 100);
+        
+        if ($paymentStatus['status'] === 'PAID') {
+            $apt->status = $paymentStatus['is_partial'] ? 'partial' : 'paid';
+        } else {
+            $apt->status = 'unpaid';
+        }
+    }
 
+    return $apt;
+});
+
+// Calculate total commission across all apartments
+$expectedCommissionTotal = 0;
+$collectedCommissionTotal = 0;
+
+foreach ($allApartments as $apt) {
+    $expectedCommissionTotal += $apt->expectedCommission;
+    $collectedCommissionTotal += $apt->collectedCommission;
+}
         // NOW apply status filter AFTER calculating payment status
         if ($statusFilter) {
             $allApartments = $allApartments->filter(function($apt) use ($statusFilter) {
@@ -152,7 +187,10 @@ class AdminApartmentController extends Controller
             'landlords',
             'landlordFilter',
             'locations',
-            'locationFilter'
+            'locationFilter',
+            'expectedRentTotal',
+            'expectedCommissionTotal',
+    'collectedCommissionTotal'
         ));
     }
 

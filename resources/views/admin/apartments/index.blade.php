@@ -63,6 +63,75 @@
     </div>
 </div>
 
+{{-- Expected Rent Summary Cards --}}
+<div class="row mb-4 g-3">
+    <div class="col-md-6">
+        <div class="card text-white bg-primary shadow-sm">
+            <div class="card-body d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="card-title mb-0">Expected Rent This Month</h5>
+                    <p class="card-text fs-4">
+                        UGX {{ number_format($expectedRentTotal) }}
+                        @php
+                            $selectedMonth = \Carbon\Carbon::createFromFormat('Y-m', $month);
+                        @endphp
+                        <br>
+                        <small class="fs-6">
+                            {{ $selectedMonth->format('F Y') }}
+                            @if($statusFilter)
+                                ({{ ucfirst($statusFilter) }} apartments only)
+                            @endif
+                        </small>
+                    </p>
+                </div>
+                <i class="bi bi-calendar-check fs-2"></i>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card text-white bg-info shadow-sm">
+            <div class="card-body d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="card-title mb-0">Expected vs Collected</h5>
+                    <p class="card-text fs-4">
+                        @php
+                            $collectedRent = 0;
+                            foreach($apartments as $apt) {
+                                $collectedRent += $apt->totalPaid;
+                            }
+                            $collectionRate = $expectedRentTotal > 0 ? ($collectedRent / $expectedRentTotal) * 100 : 0;
+                        @endphp
+                        {{ number_format($collectionRate, 1) }}%
+                        <br>
+                        <small class="fs-6">
+                            UGX {{ number_format($collectedRent) }} collected
+                        </small>
+                    </p>
+                </div>
+                <i class="bi bi-percent fs-2"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+ <div class="col-md-3">
+        <div class="card text-white bg-warning shadow-sm">
+            <div class="card-body d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="card-title mb-0">Expected Commission</h5>
+                    <p class="card-text fs-4">
+                        UGX {{ number_format($expectedCommissionTotal) }}
+                    </p>
+                    <small class="fs-6">
+                        UGX {{ number_format($collectedCommissionTotal) }} collected
+                    </small>
+                </div>
+                <i class="bi bi-cash-coin fs-2"></i>
+            </div>
+        </div>
+    </div>
+
 {{-- Filter Form --}}
 {{-- Advanced Filter Form --}}
 <div class="card shadow-sm mb-4">
@@ -99,6 +168,16 @@
                         </option>
                     @endforeach
                 </select>
+            </div>
+
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Expected Rent Range</label>
+                <div class="input-group">
+                    <input type="number" name="expected_min" class="form-control" placeholder="Min" 
+                        value="{{ request('expected_min') }}">
+                    <input type="number" name="expected_max" class="form-control" placeholder="Max" 
+                        value="{{ request('expected_max') }}">
+                </div>
             </div>
 
             <div class="col-md-3">
@@ -277,6 +356,7 @@
                 <th>Commission</th>
                 <th>Rooms</th>
                 <th>Rent</th>
+                 <th>Expected</th>
                 <th>Tenant</th>
                 <th>Status</th>
                 <th>Due Amount</th>
@@ -306,6 +386,14 @@
                 </td>
                 <td>{{ $apartment->rooms }}</td>
                 <td>UGX {{ number_format($apartment->rent) }}</td>
+                <td class="fw-bold {{ $apartment->expectedRent == 0 ? 'text-success' : ($apartment->expectedRent == $apartment->rent ? 'text-info' : 'text-warning') }}">
+            UGX {{ number_format($apartment->expectedRent) }}
+            @if($apartment->expectedRent == 0 && $apartment->tenant)
+                <br><small class="text-success">(Advance covered)</small>
+            @elseif($apartment->expectedRent < $apartment->rent && $apartment->tenant)
+                <br><small class="text-warning">(Partial advance)</small>
+            @endif
+        </td>
                 <td>
                     @if($apartment->tenant)
                         {{ $apartment->tenant->name }}

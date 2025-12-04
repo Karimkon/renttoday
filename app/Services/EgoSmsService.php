@@ -23,29 +23,32 @@ class EgoSmsService
         $this->senderId = config('services.egosms.sender_id', 'PHILWIL');
     }
 
-public function sendSms($number, $message, $priority = '0')
-{
-    // Remove test mode and uncomment real code:
-    $formattedNumber = $this->formatPhoneNumber($number);
-    
-    $data = [
-        'method' => 'SendSms',
-        'userdata' => [
-            'username' => $this->username,
-            'password' => $this->password
-        ],
-        'msgdata' => [
-            [
-                'number' => $formattedNumber,
-                'message' => urlencode($message),
-                'senderid' => $this->senderId,
-                'priority' => $priority
+    /**
+     * Send SMS - FIXED: Remove urlencode from message
+     */
+    public function sendSms($number, $message, $priority = '0')
+    {
+        $formattedNumber = $this->formatPhoneNumber($number);
+        
+        // IMPORTANT: Remove urlencode() from message
+        $data = [
+            'method' => 'SendSms',
+            'userdata' => [
+                'username' => $this->username,
+                'password' => $this->password
+            ],
+            'msgdata' => [
+                [
+                    'number' => $formattedNumber,
+                    'message' => $message, // Changed: removed urlencode()
+                    'senderid' => $this->senderId,
+                    'priority' => $priority
+                ]
             ]
-        ]
-    ];
+        ];
 
-    return $this->makeRequest($data);
-}
+        return $this->makeRequest($data);
+    }
 
     /**
      * Send multiple SMS messages
@@ -57,7 +60,7 @@ public function sendSms($number, $message, $priority = '0')
         foreach ($messages as $message) {
             $msgdata[] = [
                 'number' => $this->formatPhoneNumber($message['number']),
-                'message' => urlencode($message['message']),
+                'message' => $message['message'], // Changed: removed urlencode()
                 'senderid' => $this->senderId,
                 'priority' => $message['priority'] ?? '0'
             ];
@@ -91,7 +94,7 @@ public function sendSms($number, $message, $priority = '0')
 
             // Log the response
             Log::info('EgoSMS API Response', [
-                'data_sent' => $data,
+                'data_sent' => $this->maskLogData($data),
                 'response' => $result
             ]);
 
@@ -100,7 +103,7 @@ public function sendSms($number, $message, $priority = '0')
         } catch (\Exception $e) {
             Log::error('EgoSMS API Error', [
                 'error' => $e->getMessage(),
-                'data' => $data
+                'data' => $this->maskLogData($data)
             ]);
 
             return [
@@ -108,6 +111,30 @@ public function sendSms($number, $message, $priority = '0')
                 'Message' => $e->getMessage()
             ];
         }
+    }
+
+    /**
+     * Mask sensitive data for logging
+     */
+    private function maskLogData($data)
+    {
+        $masked = $data;
+        
+        // Mask password in logs
+        if (isset($masked['userdata']['password'])) {
+            $masked['userdata']['password'] = '***';
+        }
+        
+        // Mask phone numbers in logs
+        if (isset($masked['msgdata'])) {
+            foreach ($masked['msgdata'] as &$msg) {
+                if (isset($msg['number'])) {
+                    $msg['number'] = $this->maskPhoneNumber($msg['number']);
+                }
+            }
+        }
+        
+        return $masked;
     }
 
     /**
@@ -136,10 +163,26 @@ public function sendSms($number, $message, $priority = '0')
     }
 
     /**
- * Check if SMS was sent successfully - TEST MODE
- */
+     * Check if SMS was sent successfully
+     */
     public function isSuccess($response)
     {
         return isset($response['Status']) && $response['Status'] === 'OK';
+    }
+
+    /**
+     * Mask phone number for logs (privacy protection)
+     */
+    private function maskPhoneNumber($phone)
+    {
+        if (empty($phone) || strlen($phone) < 6) {
+            return '***';
+        }
+        
+        // Show only first 3 and last 3 digits: 256707208914 → 256***914
+        $prefix = substr($phone, 0, 3);
+        $suffix = substr($phone, -3);
+        
+        return $prefix . '***' . $suffix;
     }
 }

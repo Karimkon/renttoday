@@ -165,4 +165,99 @@ class Payment extends Model
         return $this->amount;
     }
 
+    public function allocateToMonths($months)
+{
+    $this->allocated_months = $months;
+    $this->save();
+    
+    return $this;
+}
+
+// In App\Models\Payment.php
+
+/**
+ * Get the display amount for reports
+ * For advance payments, show the full original amount
+ * For regular payments, show the amount
+ */
+public function getDisplayAmountAttribute()
+{
+    if ($this->is_advance_payment && $this->original_amount) {
+        return $this->original_amount;
+    }
+    return $this->amount;
+}
+
+/**
+ * Get how many months this advance payment covers
+ */
+public function getMonthsCoveredAttribute()
+{
+    if (!$this->is_advance_payment || !$this->allocated_months) {
+        return 0;
+    }
+    
+    return count($this->allocated_months);
+}
+
+/**
+ * Get unallocated advance amount
+ */
+public function getUnallocatedAmount()
+{
+    if (!$this->is_advance_payment) {
+        return 0;
+    }
+    
+    $originalAmount = $this->original_amount ?? $this->amount;
+    $allocatedAmount = 0;
+    
+    if ($this->allocated_months) {
+        // Each allocated month gets the apartment's rent amount
+        $apartment = $this->apartment;
+        if ($apartment) {
+            $allocatedAmount = count($this->allocated_months) * $apartment->rent;
+        }
+    }
+    
+    return max(0, $originalAmount - $allocatedAmount);
+}
+
+/**
+ * Auto-allocate advance payment to cover future months
+ */
+public function autoAllocateAdvance()
+{
+    if (!$this->is_advance_payment || !$this->apartment) {
+        return $this;
+    }
+    
+    $rent = $this->apartment->rent;
+    $originalAmount = $this->original_amount ?? $this->amount;
+    
+    // Calculate how many full months this covers
+    $fullMonths = floor($originalAmount / $rent);
+    $remainder = $originalAmount % $rent;
+    
+    // Allocate months starting from the payment month
+    $allocatedMonths = [];
+    $currentMonth = Carbon::parse($this->month);
+    
+    for ($i = 0; $i < $fullMonths; $i++) {
+        $allocatedMonths[] = $currentMonth->copy()->addMonths($i)->format('Y-m');
+    }
+    
+    $this->allocated_months = $allocatedMonths;
+    
+    // Store the remainder for next allocation
+    if ($remainder > 0) {
+        $this->notes = ($this->notes ? $this->notes . "\n" : "") . 
+                      "Remaining advance: UGX " . number_format($remainder);
+    }
+    
+    $this->save();
+    
+    return $this;
+}
+
 }

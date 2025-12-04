@@ -107,6 +107,10 @@
         <a href="{{ route('admin.payments.create') }}" class="btn btn-primary">
             <i class="bi bi-plus-circle"></i> Add Payment
         </a>
+        <a href="{{ route('admin.sms.bulk-sms', ['month' => request('month', date('Y-m'))]) }}" 
+        class="btn btn-warning">
+            <i class="bi bi-chat-text"></i> Send SMS to Unpaid
+        </a>
         
         <div class="btn-group">
             <a href="{{ route('admin.payments.index', ['status' => 'pending']) }}" class="btn btn-outline-warning">

@@ -185,6 +185,16 @@ Route::prefix('financial-reports')->name('financial-reports.')->group(function (
          ->name('apartments.export.pdf');
     Route::get('apartments/export/excel', [App\Http\Controllers\Admin\AdminApartmentController::class, 'exportExcel'])
          ->name('apartments.export.excel');
+
+           // Bulk SMS Routes
+    Route::prefix('sms')->name('sms.')->group(function () {
+        Route::get('/bulk-sms', [App\Http\Controllers\Admin\SmsController::class, 'showBulkSmsForm'])
+            ->name('bulk-sms');
+        Route::post('/bulk-sms/send', [App\Http\Controllers\Admin\SmsController::class, 'sendBulkSms'])
+            ->name('bulk-sms.send');
+        Route::get('/bulk-sms/preview', [App\Http\Controllers\Admin\SmsController::class, 'previewMessage'])
+            ->name('bulk-sms.preview');
+    });
 });
 
 

@@ -149,13 +149,51 @@
             -
         @endif
     </td>
-    <td>
-        @if($paymentStatus['is_advance'] && $paymentStatus['months_covered'] > 0)
-            {{ $reportData['month']->copy()->addMonths($paymentStatus['months_covered'])->format('F Y') }}
+   {{-- In your landlord report view --}}
+<td>
+    @if($paymentStatus['is_advance'])
+        @if($paymentStatus['payment_made_this_month'])
+            {{-- Advance payment made this month --}}
+            <span class="badge bg-success">
+                {{ $paymentStatus['months_covered'] }} MONTH{{ $paymentStatus['months_covered'] > 1 ? 'S' : '' }} ADVANCE
+            </span>
+            <br>
+            <small class="text-success">
+                UGX {{ number_format($paymentStatus['amount_paid']) }} paid
+                @if($paymentStatus['remaining_advance'] > 0)
+                    <br>(UGX {{ number_format($paymentStatus['remaining_advance']) }} remaining)
+                @endif
+            </small>
         @else
-            {{ $reportData['month']->copy()->addMonth()->format('F') }}
+            {{-- Covered by previous advance --}}
+            <span class="badge bg-info">
+                COVERED BY ADVANCE
+            </span>
+            <br>
+            <small class="text-info">
+                Balance: UGX {{ number_format($paymentStatus['advance_balance']) }}
+            </small>
         @endif
-    </td>
+    @elseif($paymentStatus['is_partial'])
+        <span class="badge bg-warning text-dark">
+            PARTIAL - UGX {{ number_format($paymentStatus['amount_paid']) }}
+        </span>
+        @if($paymentStatus['advance_balance'] > 0)
+            <br>
+            <small class="text-info">
+                + UGX {{ number_format($paymentStatus['advance_balance']) }} advance
+            </small>
+        @endif
+    @elseif($paymentStatus['status'] === 'PAID')
+        <span class="badge bg-success">
+            {{ $reportData['month']->format('F') }} PAID
+        </span>
+    @elseif($paymentStatus['status'] === 'VACANT')
+        <span class="badge bg-secondary">VACANT</span>
+    @else
+        <span class="badge bg-danger">UNPAID</span>
+    @endif
+</td>
 </tr>
 @endforeach
     <!-- Location Totals -->

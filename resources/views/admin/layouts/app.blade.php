@@ -175,6 +175,11 @@
             <i class="bi bi-graph-up"></i> Financial Reports
         </a>
 
+        <a href="{{ route('admin.sms.bulk-sms') }}" 
+        class="{{ request()->routeIs('admin.sms.*') ? 'active text-white' : '' }}">
+            <i class="bi bi-chat-dots"></i> Bulk SMS
+        </a>
+
     
 
         <form method="POST" action="{{ route('logout') }}" class="mt-3">
