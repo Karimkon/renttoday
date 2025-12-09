@@ -143,83 +143,75 @@
                 @foreach($locationApartments as $apartment)
                 @php
                     $paymentStatus = $apartment->getPaymentStatusForReport($reportData['month']->format('Y-m'));
-                    $rentPaid = $paymentStatus['amount_paid'];
                     
-                    // Calculate commission only if money was actually collected this month
-                    $commission = ($rentPaid > 0 && $paymentStatus['payment_made_this_month']) 
-                        ? ($rentPaid * ($reportData['landlord']->commission_rate / 100)) 
-                        : 0;
+                    // **NEW LOGIC: Get ALL payments made IN THIS CALENDAR MONTH (actual payment date)**
+                    $actualPayments = $apartment->payments()
+                        ->where('status', 'paid')
+                        ->where(function($query) use ($reportData) {
+                            $month = $reportData['month']->format('Y-m');
+                            // Check actual payment date OR paid_at date
+                            $query->whereRaw("DATE_FORMAT(actual_payment_date, '%Y-%m') = ?", [$month])
+                                  ->orWhere(function($q) use ($month) {
+                                      $q->whereNull('actual_payment_date')
+                                        ->whereRaw("DATE_FORMAT(paid_at, '%Y-%m') = ?", [$month]);
+                                  });
+                        })
+                        ->get();
+                    
+                    // **Use the SUM of ALL payments made this calendar month**
+                    $rentPaid = $actualPayments->sum('amount');
+                    
+                    // Commission calculation on FULL amount paid
+                    $commission = $rentPaid * ($reportData['landlord']->commission_rate / 100);
                     $amount = $rentPaid - $commission;
                     
-                    // UPDATE: Only add to location totals if payment was made this month
-                    if ($paymentStatus['payment_made_this_month']) {
-                        $locationTotal += $rentPaid;
-                        $locationCommission += $commission;
-                        $locationAmount += $amount;
-                    }
+                    // Add to location totals
+                    $locationTotal += $rentPaid;
+                    $locationCommission += $commission;
+                    $locationAmount += $amount;
                     
-                    // Get the payment that's allocated to this month
-                    $displayPayment = $apartment->getPaymentForMonth($reportData['month']->format('Y-m'));
+                    // Determine if this is an advance payment (multiple months)
+                    $isAdvancePayment = $rentPaid > $apartment->rent;
+                    $monthsCovered = $isAdvancePayment ? floor($rentPaid / $apartment->rent) : 0;
+                    
+                    // Get the payment for display
+                    $displayPayment = $actualPayments->first();
                 @endphp
                 <tr>
                     <td>{{ $apartment->number }}</td>
                     <td>UGX {{ number_format($apartment->rent) }}</td>
                     
-                    <!-- Rent Paid Column with Advanced Display -->
+                    <!-- Rent Paid Column -->
                     <td>
-                        @if($paymentStatus['status'] === 'VACANT')
+                        @if($rentPaid == 0)
                             UGX 0
-                        @elseif($paymentStatus['status'] === 'PAID')
-                            @if($paymentStatus['is_advance'] && !$paymentStatus['payment_made_this_month'])
-                                <span class="status-advance">ADVANCE</span>
-                            @elseif($paymentStatus['is_advance'] && $paymentStatus['payment_made_this_month'])
-                                UGX {{ number_format($rentPaid) }}
-                            @elseif($paymentStatus['is_partial'])
-                                UGX {{ number_format($rentPaid) }}
-                            @else
-                                UGX {{ number_format($rentPaid) }}
-                            @endif
                         @else
-                            UGX 0
+                            UGX {{ number_format($rentPaid) }}
+                            @if($isAdvancePayment)
+                                <div class="small-note">
+                                    ({{ $monthsCovered }} month{{ $monthsCovered > 1 ? 's' : '' }})
+                                </div>
+                            @endif
                         @endif
                     </td>
                     
                     <td>UGX {{ number_format($commission) }}</td>
                     <td>UGX {{ number_format($amount) }}</td>
                     
-                    <!-- Month/s Paid Column with Enhanced Status Display -->
+                    <!-- Month/s Paid Column -->
                     <td>
-                        @if($paymentStatus['status'] === 'VACANT')
+                        @if(!$apartment->tenant)
                             <span class="badge badge-secondary">VACANT</span>
-                        @elseif($paymentStatus['status'] === 'PAID')
-                            @if($paymentStatus['is_advance'] && !$paymentStatus['payment_made_this_month'])
-                                <!-- This month is covered by advance payment made earlier -->
-                                <span class="badge badge-info">ADVANCE COVERED</span>
-                                <div class="small-note">
-                                    ({{ $paymentStatus['months_covered'] }} months remaining)
-                                </div>
-                            @elseif($paymentStatus['is_advance'] && $paymentStatus['payment_made_this_month'])
-                                <!-- Advance payment was made this month -->
-                                <span class="badge badge-success">
-                                    {{ $paymentStatus['months_covered'] }} MONTH{{ $paymentStatus['months_covered'] > 1 ? 'S' : '' }} ADVANCE PAID
-                                </span>
-                                @if($paymentStatus['remaining_advance'] > 0)
-                                    <div class="advance-note">
-                                        (UGX {{ number_format($paymentStatus['remaining_advance']) }} remaining)
-                                    </div>
-                                @endif
-                            @elseif($paymentStatus['is_partial'])
-                                <span class="badge badge-warning">PARTIAL - UGX {{ number_format($rentPaid) }}</span>
-                                @if($paymentStatus['advance_balance'] > 0)
-                                    <div class="advance-note">
-                                        + UGX {{ number_format($paymentStatus['advance_balance']) }} advance
-                                    </div>
-                                @endif
-                            @else
-                                <span class="badge badge-success">{{ $reportData['month']->format('F') }} PAID</span>
-                            @endif
-                        @else
+                        @elseif($rentPaid == 0)
                             <span class="badge badge-danger">UNPAID</span>
+                        @elseif($isAdvancePayment)
+                            <span class="badge badge-success">
+                                {{ $monthsCovered }} MONTH{{ $monthsCovered > 1 ? 'S' : '' }} ADVANCE PAID
+                            </span>
+                        @elseif($rentPaid >= $apartment->rent)
+                            <span class="badge badge-success">{{ $reportData['month']->format('F') }} PAID</span>
+                        @else
+                            <span class="badge badge-warning">PARTIAL - UGX {{ number_format($rentPaid) }}</span>
                         @endif
                     </td>
                     
@@ -230,9 +222,6 @@
                             @if($displayPayment->is_advance_payment)
                                 <div class="advance-note">(Advance Payment)</div>
                             @endif
-                            @if($displayPayment->actual_payment_date && $displayPayment->actual_payment_date->format('Y-m-d') != $displayPayment->created_at->format('Y-m-d'))
-                                <div class="small-note">(recorded: {{ $displayPayment->created_at->format('jS/m/Y') }})</div>
-                            @endif
                         @else
                             -
                         @endif
@@ -240,25 +229,13 @@
                     
                     <!-- Next of Payment Column -->
                     <td>
-                        @if($paymentStatus['is_advance'])
-                            @if($paymentStatus['payment_made_this_month'])
-                                <!-- Advance payment made this month -->
-                                @if($paymentStatus['months_covered'] > 0)
-                                    {{ $reportData['month']->copy()->addMonths($paymentStatus['months_covered'])->format('F Y') }}
-                                @else
-                                    {{ $reportData['month']->copy()->addMonth()->format('F') }}
-                                @endif
-                            @else
-                                <!-- Covered by previous advance -->
-                                @if($paymentStatus['months_covered'] > 0)
-                                    {{ $reportData['month']->copy()->addMonths($paymentStatus['months_covered'])->format('F Y') }}
-                                @else
-                                    {{ $reportData['month']->copy()->addMonth()->format('F') }}
-                                @endif
-                            @endif
-                        @elseif($paymentStatus['is_partial'])
-                            {{ $reportData['month']->copy()->addMonth()->format('F') }}
-                        @elseif($paymentStatus['status'] === 'PAID')
+                        @if(!$apartment->tenant)
+                            <span class="badge badge-secondary">VACANT</span>
+                        @elseif($rentPaid == 0)
+                            <span class="badge badge-danger">UNPAID</span>
+                        @elseif($isAdvancePayment)
+                            {{ $reportData['month']->copy()->addMonths($monthsCovered)->format('F Y') }}
+                        @elseif($rentPaid >= $apartment->rent)
                             {{ $reportData['month']->copy()->addMonth()->format('F') }}
                         @else
                             {{ $reportData['month']->copy()->addMonth()->format('F') }}

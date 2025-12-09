@@ -59,68 +59,56 @@ class LandlordController extends Controller
         return view('admin.landlords.show', compact('landlord', 'selectedMonth'));
     }
 
-    public function showReport(Landlord $landlord, $month = null)
-    {
-        $month = $month ?? now()->format('Y-m');
-        $monthCarbon = Carbon::createFromFormat('Y-m', $month);
+ public function showReport(Landlord $landlord, $month = null)
+{
+    $month = $month ?? now()->format('Y-m');
+    $monthCarbon = Carbon::createFromFormat('Y-m', $month);
+    
+    $apartments = $landlord->apartments()->with(['tenant', 'payments'])->get();
+
+    // **FIX: Calculate totals based on ACTUAL payments made in this month**
+    $totalRent = 0;
+    $totalCommission = 0;
+    
+    foreach ($apartments as $apartment) {
+        // Get ALL payments made in this calendar month
+        $paymentsThisMonth = $apartment->payments()
+            ->where('status', 'paid')
+            ->where(function($query) use ($month) {
+                $query->whereRaw("DATE_FORMAT(actual_payment_date, '%Y-%m') = ?", [$month])
+                      ->orWhere(function($q) use ($month) {
+                          $q->whereNull('actual_payment_date')
+                            ->whereRaw("DATE_FORMAT(paid_at, '%Y-%m') = ?", [$month]);
+                      });
+            })
+            ->get();
         
-        $apartments = $landlord->apartments()->with(['tenant', 'payments'])->get();
-
-        // Calculate totals - ONLY count money that was actually collected in this month
-        $totalRent = 0;
-        $totalCommission = 0;
+        $rentPaid = $paymentsThisMonth->sum('amount');
+        $totalRent += $rentPaid;
         
-        foreach ($apartments as $apartment) {
-            $paymentStatus = $apartment->getPaymentStatusForReport($month);
-            
-            // Only count money if payment was actually made this month
-            // NOT if it's covered by advance from previous months
-            if ($paymentStatus['amount_paid'] > 0 && $paymentStatus['payment_made_this_month']) {
-                $totalRent += $paymentStatus['amount_paid'];
-            }
-        }
-        
-        $totalCommission = $totalRent * ($landlord->commission_rate / 100);
-        $amountDue = $totalRent - $totalCommission;
-
-        $landlordPaymentStatus = $landlord->getPaymentStatus($month);
-
-        // REMOVED: ReportNote functionality since the model doesn't exist
-        // $reportNote = ReportNote::where('landlord_id', $landlord->id)
-        //     ->where('month', $month)
-        //     ->first();
-
-        // if (!$reportNote) {
-        //     $reportNote = new ReportNote([
-        //         'landlord_id' => $landlord->id,
-        //         'month' => $month,
-        //         'notes' => '',
-        //         'created_by' => Auth::id()
-        //     ]);
-        // }
-
-        $reportData = [
-            'landlord' => $landlord,
-            'month' => $monthCarbon,
-            'apartments' => $apartments,
-            'totalRent' => $totalRent,
-            'totalCommission' => $totalCommission,
-            'amountDue' => $amountDue,
-            'landlordPaymentStatus' => $landlordPaymentStatus,
-            // REMOVED: 'reportNote' => $reportNote
-        ];
-
-        $locations = $landlord->apartments()->distinct()->pluck('location');
-
-        return view('admin.landlords.report', compact('reportData', 'locations'));
+        // Calculate commission on FULL amount
+        $commission = $rentPaid * ($landlord->commission_rate / 100);
+        $totalCommission += $commission;
     }
+    
+    $amountDue = $totalRent - $totalCommission;
 
-    // REMOVED: saveReportNote method since ReportNote model doesn't exist
-    // public function saveReportNote(Request $request, Landlord $landlord)
-    // {
-    //     // Method removed
-    // }
+    $landlordPaymentStatus = $landlord->getPaymentStatus($month);
 
+    $reportData = [
+        'landlord' => $landlord,
+        'month' => $monthCarbon,
+        'apartments' => $apartments,
+        'totalRent' => $totalRent,
+        'totalCommission' => $totalCommission,
+        'amountDue' => $amountDue,
+        'landlordPaymentStatus' => $landlordPaymentStatus,
+    ];
+
+    $locations = $landlord->apartments()->distinct()->pluck('location');
+
+    return view('admin.landlords.report', compact('reportData', 'locations'));
+}
     public function markPaymentPaid(Request $request, Landlord $landlord)
     {
         $request->validate([
@@ -148,100 +136,103 @@ class LandlordController extends Controller
     }
 
     public function generatePdfReport(Landlord $landlord, $month = null)
-    {
-        try {
-            $month = $month ?? now()->format('Y-m');
-            $monthCarbon = Carbon::createFromFormat('Y-m', $month);
-            
-            // Get apartments with payments for the selected month
-            $apartments = $landlord->apartments()->with(['tenant', 'payments' => function($q) use ($month) {
-                $q->where('month', 'like', $month . '%');
-            }])->get();
+{
+    try {
+        $month = $month ?? now()->format('Y-m');
+        $monthCarbon = Carbon::createFromFormat('Y-m', $month);
+        
+        $apartments = $landlord->apartments()->with(['tenant', 'payments'])->get();
 
-            // Calculate totals
-            $totalRent = 0;
-            $totalCommission = 0;
+        // **FIX: Calculate totals based on ACTUAL payments made in this month (NEW LOGIC)**
+        $totalRent = 0;
+        $totalCommission = 0;
+        
+        foreach ($apartments as $apartment) {
+            // Get ALL payments made in this calendar month
+            $paymentsThisMonth = $apartment->payments()
+                ->where('status', 'paid')
+                ->where(function($query) use ($month) {
+                    $query->whereRaw("DATE_FORMAT(actual_payment_date, '%Y-%m') = ?", [$month])
+                          ->orWhere(function($q) use ($month) {
+                              $q->whereNull('actual_payment_date')
+                                ->whereRaw("DATE_FORMAT(paid_at, '%Y-%m') = ?", [$month]);
+                          });
+                })
+                ->get();
             
-            foreach ($apartments as $apartment) {
-                $paymentStatus = $apartment->getPaymentStatusForReport($month);
-                if ($paymentStatus['amount_paid'] > 0 && $paymentStatus['payment_made_this_month']) {
-                    $totalRent += $paymentStatus['amount_paid'];
-                }
-            }
+            $rentPaid = $paymentsThisMonth->sum('amount');
+            $totalRent += $rentPaid;
             
-            $totalCommission = $totalRent * ($landlord->commission_rate / 100);
-            $amountDue = $totalRent - $totalCommission;
-
-            // Get payment status for this month
-            $landlordPaymentStatus = $landlord->getPaymentStatus($month);
-
-            // REMOVED: ReportNote functionality
-            // $reportNote = ReportNote::where('landlord_id', $landlord->id)
-            //     ->where('month', $month)
-            //     ->first();
-
-            $reportData = [
-                'landlord' => $landlord,
-                'month' => $monthCarbon,
-                'apartments' => $apartments,
-                'totalRent' => $totalRent,
-                'totalCommission' => $totalCommission,
-                'amountDue' => $amountDue,
-                'landlordPaymentStatus' => $landlordPaymentStatus,
-                // REMOVED: 'reportNote' => $reportNote
-            ];
-
-            $locations = $landlord->apartments()->distinct()->pluck('location');
-
-            // SHARED HOSTING FIX: Configure DomPDF for shared hosting
-            $pdf = PDF::loadView('admin.landlords.report-pdf', compact('reportData', 'locations'));
-            
-            // Set paper and orientation
-            $pdf->setPaper('A4', 'portrait');
-            
-            // CRITICAL: Set DomPDF options for shared hosting
-            $pdf->setOptions([
-                'isHtml5ParserEnabled' => true,
-                'isRemoteEnabled' => false,
-                'chroot' => base_path(),
-                'tempDir' => storage_path('app/temp'),
-                'fontDir' => storage_path('fonts'),
-                'fontCache' => storage_path('fonts'),
-                'isFontSubsettingEnabled' => false,
-                'defaultFont' => 'helvetica',
-                'debugPng' => false,
-                'debugKeepTemp' => false,
-                'debugCss' => false,
-                'debugLayout' => false,
-                'debugLayoutLines' => false,
-                'debugLayoutBlocks' => false,
-                'debugLayoutInline' => false,
-                'debugLayoutPaddingBox' => false,
-            ]);
-            
-            // Ensure temp directory exists
-            $tempDir = storage_path('app/temp');
-            if (!file_exists($tempDir)) {
-                mkdir($tempDir, 0755, true);
-            }
-            
-            $filename = $this->sanitizeFilename("rent-today-report-{$landlord->name}-{$month}.pdf");
-            
-            return $pdf->download($filename);
-            
-        } catch (\Exception $e) {
-            // Log the error for debugging
-            Log::error('PDF Generation Error', [
-                'landlord_id' => $landlord->id,
-                'month' => $month,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            // Fallback: Return HTML version
-            return $this->generateHtmlFallback($landlord, $month);
+            // Calculate commission on FULL amount
+            $commission = $rentPaid * ($landlord->commission_rate / 100);
+            $totalCommission += $commission;
         }
+        
+        $amountDue = $totalRent - $totalCommission;
+
+        $landlordPaymentStatus = $landlord->getPaymentStatus($month);
+
+        $reportData = [
+            'landlord' => $landlord,
+            'month' => $monthCarbon,
+            'apartments' => $apartments,
+            'totalRent' => $totalRent,
+            'totalCommission' => $totalCommission,
+            'amountDue' => $amountDue,
+            'landlordPaymentStatus' => $landlordPaymentStatus,
+        ];
+
+        $locations = $landlord->apartments()->distinct()->pluck('location');
+
+        // SHARED HOSTING FIX: Configure DomPDF for shared hosting
+        $pdf = PDF::loadView('admin.landlords.report-pdf', compact('reportData', 'locations'));
+        
+        // Set paper and orientation
+        $pdf->setPaper('A4', 'portrait');
+        
+        // CRITICAL: Set DomPDF options for shared hosting
+        $pdf->setOptions([
+            'isHtml5ParserEnabled' => true,
+            'isRemoteEnabled' => false,
+            'chroot' => base_path(),
+            'tempDir' => storage_path('app/temp'),
+            'fontDir' => storage_path('fonts'),
+            'fontCache' => storage_path('fonts'),
+            'isFontSubsettingEnabled' => false,
+            'defaultFont' => 'helvetica',
+            'debugPng' => false,
+            'debugKeepTemp' => false,
+            'debugCss' => false,
+            'debugLayout' => false,
+            'debugLayoutLines' => false,
+            'debugLayoutBlocks' => false,
+            'debugLayoutInline' => false,
+            'debugLayoutPaddingBox' => false,
+        ]);
+        
+        // Ensure temp directory exists
+        $tempDir = storage_path('app/temp');
+        if (!file_exists($tempDir)) {
+            mkdir($tempDir, 0755, true);
+        }
+        
+        $filename = $this->sanitizeFilename("rent-today-report-{$landlord->name}-{$month}.pdf");
+        
+        return $pdf->download($filename);
+        
+    } catch (\Exception $e) {
+        // Log the error for debugging
+        Log::error('PDF Generation Error', [
+            'landlord_id' => $landlord->id,
+            'month' => $month,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        
+        // Fallback: Return HTML version
+        return $this->generateHtmlFallback($landlord, $month);
     }
+}
 
     /**
      * Sanitize filename for cross-platform compatibility
@@ -257,54 +248,63 @@ class LandlordController extends Controller
     /**
      * HTML Fallback when PDF generation fails
      */
-    private function generateHtmlFallback(Landlord $landlord, $month)
-    {
-        try {
-            $monthCarbon = Carbon::createFromFormat('Y-m', $month);
+    /**
+ * HTML Fallback when PDF generation fails
+ */
+private function generateHtmlFallback(Landlord $landlord, $month)
+{
+    try {
+        $monthCarbon = Carbon::createFromFormat('Y-m', $month);
+        
+        $apartments = $landlord->apartments()->with(['tenant', 'payments'])->get();
+
+        // **FIX: Calculate totals based on ACTUAL payments made in this month (NEW LOGIC)**
+        $totalRent = 0;
+        $totalCommission = 0;
+        
+        foreach ($apartments as $apartment) {
+            // Get ALL payments made in this calendar month
+            $paymentsThisMonth = $apartment->payments()
+                ->where('status', 'paid')
+                ->where(function($query) use ($month) {
+                    $query->whereRaw("DATE_FORMAT(actual_payment_date, '%Y-%m') = ?", [$month])
+                          ->orWhere(function($q) use ($month) {
+                              $q->whereNull('actual_payment_date')
+                                ->whereRaw("DATE_FORMAT(paid_at, '%Y-%m') = ?", [$month]);
+                          });
+                })
+                ->get();
             
-            $apartments = $landlord->apartments()->with(['tenant', 'payments' => function($q) use ($month) {
-                $q->where('month', 'like', $month . '%');
-            }])->get();
-
-            $totalRent = 0;
-            $totalCommission = 0;
+            $rentPaid = $paymentsThisMonth->sum('amount');
+            $totalRent += $rentPaid;
             
-            foreach ($apartments as $apartment) {
-                $paymentStatus = $apartment->getPaymentStatusForReport($month);
-                if ($paymentStatus['amount_paid'] > 0 && $paymentStatus['payment_made_this_month']) {
-                    $totalRent += $paymentStatus['amount_paid'];
-                }
-            }
-            
-            $totalCommission = $totalRent * ($landlord->commission_rate / 100);
-            $amountDue = $totalRent - $totalCommission;
-            $landlordPaymentStatus = $landlord->getPaymentStatus($month);
-
-            // REMOVED: ReportNote functionality
-            // $reportNote = ReportNote::where('landlord_id', $landlord->id)
-            //     ->where('month', $month)
-            //     ->first();
-
-            $reportData = [
-                'landlord' => $landlord,
-                'month' => $monthCarbon,
-                'apartments' => $apartments,
-                'totalRent' => $totalRent,
-                'totalCommission' => $totalCommission,
-                'amountDue' => $amountDue,
-                'landlordPaymentStatus' => $landlordPaymentStatus,
-                // REMOVED: 'reportNote' => $reportNote
-            ];
-
-            $locations = $landlord->apartments()->distinct()->pluck('location');
-
-            return view('admin.landlords.report-pdf', compact('reportData', 'locations'))
-                ->with('isHtmlFallback', true);
-                
-        } catch (\Exception $e) {
-            return back()->with('error', 'PDF generation failed: ' . $e->getMessage());
+            // Calculate commission on FULL amount
+            $commission = $rentPaid * ($landlord->commission_rate / 100);
+            $totalCommission += $commission;
         }
+        
+        $amountDue = $totalRent - $totalCommission;
+        $landlordPaymentStatus = $landlord->getPaymentStatus($month);
+
+        $reportData = [
+            'landlord' => $landlord,
+            'month' => $monthCarbon,
+            'apartments' => $apartments,
+            'totalRent' => $totalRent,
+            'totalCommission' => $totalCommission,
+            'amountDue' => $amountDue,
+            'landlordPaymentStatus' => $landlordPaymentStatus,
+        ];
+
+        $locations = $landlord->apartments()->distinct()->pluck('location');
+
+        return view('admin.landlords.report-pdf', compact('reportData', 'locations'))
+            ->with('isHtmlFallback', true);
+            
+    } catch (\Exception $e) {
+        return back()->with('error', 'PDF generation failed: ' . $e->getMessage());
     }
+}
     
     public function edit(Landlord $landlord)
     {

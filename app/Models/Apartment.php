@@ -38,7 +38,7 @@ class Apartment extends Model
     /**
      * FIXED: Get payment status showing FULL amount paid in the month money was received
      */
-   public function getPaymentStatusForReport($month)
+public function getPaymentStatusForReport($month)
 {
     if (!$this->tenant) {
         return [
@@ -48,7 +48,9 @@ class Apartment extends Model
             'months_covered' => 0,
             'payment_made_this_month' => false,
             'is_partial' => false,
-            'advance_balance' => 0 // NEW: Track remaining advance
+            'advance_balance' => 0,
+            'remaining_advance' => 0,
+            'is_covered' => false // ADD THIS
         ];
     }
 
@@ -60,64 +62,40 @@ class Apartment extends Model
         ->where('status', 'paid')
         ->get();
     
-    // Calculate total advance balance that hasn't been allocated yet
-    $totalAdvanceBalance = 0;
-    $allocatedMonths = [];
+    // Check if ANY payment covers this month (regardless of when it was paid)
+    $isCovered = false; // ADD THIS LINE
+    $amountForThisMonth = 0;
+    $isAdvance = false;
+    $monthsCovered = 0;
+    $paymentMadeThisMonth = false;
     
     foreach ($allPayments as $payment) {
-        if ($payment->is_advance_payment) {
-            // Calculate how much of this advance hasn't been used
-            $paymentAmount = $payment->original_amount ?? $payment->amount;
-            $allocatedAmount = 0;
+        // Check if payment covers this month
+        if ($payment->coversMonth($monthFormatted)) {
+            $isCovered = true; // SET THIS
             
-            if ($payment->allocated_months) {
-                // Calculate how much has been allocated to specific months
-                foreach ($payment->allocated_months as $allocatedMonth) {
-                    $allocatedAmount += $this->rent; // Each month gets full rent
-                }
+            // For this specific month, get the amount allocated
+            $amountForThisMonth += $payment->getAmountForMonth($monthFormatted);
+            
+            // Check if payment was made in this month
+            $paidAt = $payment->actual_payment_date ?? $payment->paid_at;
+            if ($paidAt && $paidAt->format('Y-m') === $monthFormatted) {
+                $paymentMadeThisMonth = true;
             }
             
-            $remainingAdvance = $paymentAmount - $allocatedAmount;
-            if ($remainingAdvance > 0) {
-                $totalAdvanceBalance += $remainingAdvance;
+            if ($payment->is_advance_payment) {
+                $isAdvance = true;
+                if ($payment->allocated_months && in_array($monthFormatted, $payment->allocated_months)) {
+                    $monthsCovered = count($payment->allocated_months);
+                }
             }
         }
     }
     
-    // Check if this specific month is covered by any payment
-    $coveringPayments = $allPayments->filter(function($payment) use ($monthFormatted) {
-        return $payment->coversMonth($monthFormatted);
-    });
-
-    $paymentMadeThisMonth = $coveringPayments->filter(function($payment) use ($monthCarbon) {
-        $paidAt = $payment->actual_payment_date ?? $payment->paid_at;
-        return $paidAt && 
-               $paidAt->year == $monthCarbon->year && 
-               $paidAt->month == $monthCarbon->month;
-    })->isNotEmpty();
-
-    // Calculate amount paid FOR THIS SPECIFIC MONTH
-    $amountForThisMonth = 0;
-    $isCoveredByAdvance = false;
-    $advanceMonthsCovered = 0;
-    
-    foreach ($coveringPayments as $payment) {
-        if ($payment->is_advance_payment) {
-            $isCoveredByAdvance = true;
-            
-            // Check how many months this advance covers
-            if ($payment->allocated_months) {
-                $advanceMonthsCovered = max($advanceMonthsCovered, count($payment->allocated_months));
-            }
-            
-            // If this month is explicitly in allocated_months, it gets full rent
-            if ($payment->allocated_months && in_array($monthFormatted, $payment->allocated_months)) {
-                $amountForThisMonth = $this->rent;
-            }
-        } else {
-            // Regular monthly payment
-            $amountForThisMonth += $payment->amount;
-        }
+    // Also check tenant credit balance
+    if (!$isCovered && ($this->tenant->credit_balance ?? 0) >= $this->rent) {
+        $isCovered = true;
+        $amountForThisMonth = $this->rent;
     }
     
     $rent = $this->rent;
@@ -125,30 +103,27 @@ class Apartment extends Model
     $isPartial = false;
     
     // Determine status
-    if ($amountForThisMonth >= $rent) {
-        $status = 'PAID';
-    } elseif ($amountForThisMonth > 0) {
-        $status = 'PAID'; // Still considered paid even if partial
-        $isPartial = true;
-    } elseif ($isCoveredByAdvance && $totalAdvanceBalance >= $rent) {
-        // This month is covered by advance balance
-        $status = 'PAID';
-        $isCoveredByAdvance = true;
-        $amountForThisMonth = $rent; // Show as paid with advance
+    if ($isCovered) {
+        if ($amountForThisMonth >= $rent) {
+            $status = 'PAID';
+        } elseif ($amountForThisMonth > 0) {
+            $status = 'PAID'; // Still show as PAID but mark as partial
+            $isPartial = true;
+        }
     }
 
     return [
         'status' => $status,
-        'amount_paid' => $amountForThisMonth,
-        'is_advance' => $isCoveredByAdvance,
-        'months_covered' => $advanceMonthsCovered,
+        'amount_paid' => $amountForThisMonth, // Amount covering this specific month
+        'is_covered' => $isCovered, // ADD THIS
+        'is_advance' => $isAdvance,
+        'months_covered' => $monthsCovered,
         'payment_made_this_month' => $paymentMadeThisMonth,
         'is_partial' => $isPartial,
-        'advance_balance' => $totalAdvanceBalance,
-        'remaining_advance' => $totalAdvanceBalance - ($isCoveredByAdvance ? $rent : 0)
+        'advance_balance' => 0,
+        'remaining_advance' => 0
     ];
 }
-
     /**
      * Get the payment record for displaying in report
      */

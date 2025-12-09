@@ -156,14 +156,22 @@ class Payment extends Model
      * Get the amount allocated to a specific month
      */
      public function getAmountForMonth($month)
-    {
-        if (!$this->coversMonth($month)) {
-            return 0;
-        }
-        
-        // Always return the actual payment amount for this month
-        return $this->amount;
+{
+    if (!$this->coversMonth($month)) {
+        return 0;
     }
+    
+    // For advance payments with allocated months, return full rent for that month
+    if ($this->is_advance_payment && $this->allocated_months && in_array($month, $this->allocated_months)) {
+        $apartment = $this->apartment;
+        if ($apartment) {
+            return $apartment->rent;
+        }
+    }
+    
+    // For regular payments or unallocated advance, return the payment amount
+    return $this->amount;
+}
 
     public function allocateToMonths($months)
 {
