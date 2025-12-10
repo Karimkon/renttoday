@@ -85,21 +85,19 @@
 @php
     $paymentStatus = $apartment->getPaymentStatusForReport($reportData['month']->format('Y-m'));
     
-    // **SIMPLE FIX: Get ACTUAL payments made for this specific month**
-   // **FIX: Get ALL payments made IN THIS CALENDAR MONTH (actual payment date)**
+  // **CORRECTED: Get payments ALLOCATED TO this specific month, regardless of when paid**
 $actualPayments = $apartment->payments()
     ->where('status', 'paid')
     ->where(function($query) use ($reportData) {
         $month = $reportData['month']->format('Y-m');
-        // Check actual payment date OR paid_at date
-        $query->whereRaw("DATE_FORMAT(actual_payment_date, '%Y-%m') = ?", [$month])
-              ->orWhere(function($q) use ($month) {
-                  $q->whereNull('actual_payment_date')
-                    ->whereRaw("DATE_FORMAT(paid_at, '%Y-%m') = ?", [$month]);
-              });
+        
+        // Payments with month field matching report month
+        $query->whereRaw("DATE_FORMAT(month, '%Y-%m') = ?", [$month])
+              // OR advance payments allocated to this month
+              ->orWhereJsonContains('allocated_months', $month);
     })
     ->get();
-    
+        
     // **Use the SUM of actual payments, not the calculated amount**
     $rentPaid = $actualPayments->sum('amount');
     

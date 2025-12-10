@@ -59,34 +59,31 @@ class LandlordController extends Controller
         return view('admin.landlords.show', compact('landlord', 'selectedMonth'));
     }
 
- public function showReport(Landlord $landlord, $month = null)
+public function showReport(Landlord $landlord, $month = null)
 {
     $month = $month ?? now()->format('Y-m');
     $monthCarbon = Carbon::createFromFormat('Y-m', $month);
     
     $apartments = $landlord->apartments()->with(['tenant', 'payments'])->get();
 
-    // **FIX: Calculate totals based on ACTUAL payments made in this month**
+    // **CORRECTED: Calculate totals based on payments ALLOCATED TO this month**
     $totalRent = 0;
     $totalCommission = 0;
     
     foreach ($apartments as $apartment) {
-        // Get ALL payments made in this calendar month
-        $paymentsThisMonth = $apartment->payments()
+        // Get payments ALLOCATED TO this specific month
+        $paymentsForThisMonth = $apartment->payments()
             ->where('status', 'paid')
             ->where(function($query) use ($month) {
-                $query->whereRaw("DATE_FORMAT(actual_payment_date, '%Y-%m') = ?", [$month])
-                      ->orWhere(function($q) use ($month) {
-                          $q->whereNull('actual_payment_date')
-                            ->whereRaw("DATE_FORMAT(paid_at, '%Y-%m') = ?", [$month]);
-                      });
+                $query->whereRaw("DATE_FORMAT(month, '%Y-%m') = ?", [$month])
+                      ->orWhereJsonContains('allocated_months', $month);
             })
             ->get();
         
-        $rentPaid = $paymentsThisMonth->sum('amount');
+        $rentPaid = $paymentsForThisMonth->sum('amount');
         $totalRent += $rentPaid;
         
-        // Calculate commission on FULL amount
+        // Calculate commission on amount allocated to this month
         $commission = $rentPaid * ($landlord->commission_rate / 100);
         $totalCommission += $commission;
     }
