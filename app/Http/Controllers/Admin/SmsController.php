@@ -40,169 +40,275 @@ class SmsController extends Controller
     }
 
     /**
-     * Send bulk SMS to unpaid tenants
-     */
-   public function sendBulkSms(Request $request)
-{
-    session()->forget(['sent_messages', 'failed_messages']);
-    $request->validate([
-        'month' => 'required|date_format:Y-m',
-        'message_type' => 'required|in:reminder,custom',
-        'custom_message' => 'nullable|string|max:160',
-        'tenant_ids' => 'required|array|min:1', // CHANGED: required, min 1
-        'tenant_ids.*' => 'exists:tenants,id'
-    ]);
-
-    $selectedMonth = $request->month;
-    $messageType = $request->message_type;
-    $customMessage = $request->custom_message;
-    $selectedTenantIds = $request->tenant_ids ?? [];
-    
-    // IMPORTANT: Only send to selected tenants
-    $tenants = Tenant::whereIn('id', $selectedTenantIds)
-        ->whereNotNull('phone')
-        ->with('apartment')
-        ->get();
-
-    // Validate that we found the tenants
-    if ($tenants->isEmpty()) {
-        return redirect()->back()
-            ->with('error', 'No valid tenants selected for SMS sending.')
-            ->withInput();
-    }
-
-    $sentCount = 0;
-    $failedCount = 0;
-    $sentMessages = [];
-    $failedMessages = [];
-
-    foreach ($tenants as $tenant) {
-        try {
-            if (!$tenant->phone) {
-                $failedCount++;
-                $failedMessages[] = [
-                    'tenant' => $tenant->name,
-                    'reason' => 'No phone number',
-                    'apartment' => $tenant->apartment->number ?? 'N/A'
-                ];
-                continue;
-            }
-
-            // Build message based on type
-            if ($messageType === 'custom' && $customMessage) {
-                $message = $this->personalizeMessage($customMessage, $tenant, $selectedMonth);
-            } else {
-                $message = $this->buildReminderMessage($tenant, $selectedMonth);
-            }
-
-            // Send SMS
-            $response = $this->smsService->sendSms($tenant->phone, $message);
-            
-            if ($this->smsService->isSuccess($response)) {
-                $sentCount++;
-                $sentMessages[] = [
-                    'tenant' => $tenant->name,
-                    'phone' => $this->maskPhone($tenant->phone),
-                    'message' => $message,
-                    'apartment' => $tenant->apartment->number ?? 'N/A'
-                ];
-                
-                Log::info('Bulk SMS sent successfully', [
-                    'tenant_id' => $tenant->id,
-                    'phone' => $this->maskPhone($tenant->phone),
-                    'month' => $selectedMonth
-                ]);
-            } else {
-                $failedCount++;
-                $failedMessages[] = [
-                    'tenant' => $tenant->name,
-                    'reason' => 'SMS API failed',
-                    'response' => $response,
-                    'apartment' => $tenant->apartment->number ?? 'N/A'
-                ];
-            }
-            
-            // Small delay to avoid rate limiting
-            usleep(100000); // 0.1 second delay
-            
-        } catch (\Exception $e) {
-            $failedCount++;
-            $failedMessages[] = [
-                'tenant' => $tenant->name,
-                'reason' => 'Exception: ' . $e->getMessage(),
-                'apartment' => $tenant->apartment->number ?? 'N/A'
-            ];
-            Log::error('Bulk SMS error for tenant ' . $tenant->id, ['error' => $e->getMessage()]);
-        }
-    }
-
-    return redirect()->route('admin.sms.bulk-sms')
-        ->with('success', "Sent {$sentCount} SMS, failed: {$failedCount}")
-        ->with('sent_messages', $sentMessages)
-        ->with('failed_messages', $failedMessages);
-}
-
-    /**
-     * Get tenants who haven't paid for a specific month
-     */
-    private function getUnpaidTenantsForMonth($month)
-    {
-        return Tenant::whereHas('apartment')
-            ->with(['apartment', 'payments' => function($query) use ($month) {
-                $query->where('month', 'like', $month . '%')
-                      ->where('status', 'paid');
-            }])
-            ->whereNotNull('phone')
-            ->get()
-            ->filter(function($tenant) use ($month) {
-                $hasPaid = $tenant->payments->isNotEmpty();
-                return !$hasPaid;
-            })
-            ->values();
-    }
-
-    /**
-     * Get filtered tenants for display
+     * Get filtered tenants with detailed payment status
      */
     private function getFilteredTenants($month, $status = 'unpaid')
     {
         $tenants = Tenant::whereHas('apartment')
             ->with(['apartment', 'payments' => function($query) use ($month) {
-                $query->where('month', 'like', $month . '%')
-                      ->where('status', 'paid');
+                $query->where('status', 'paid')
+                      ->where(function($q) use ($month) {
+                          // Payments allocated to this specific month
+                          $q->whereRaw("DATE_FORMAT(month, '%Y-%m') = ?", [$month])
+                            ->orWhereJsonContains('allocated_months', $month);
+                      });
             }])
             ->whereNotNull('phone')
             ->get()
             ->map(function($tenant) use ($month) {
-                $tenant->hasPaid = $tenant->payments->isNotEmpty();
-                $tenant->dueAmount = $tenant->apartment ? $tenant->apartment->rent : 0;
-                $tenant->paymentStatus = $tenant->hasPaid ? 'paid' : 'unpaid';
+                $apartment = $tenant->apartment;
+                
+                if (!$apartment) {
+                    $tenant->hasPaid = false;
+                    $tenant->paymentStatus = 'unpaid';
+                    $tenant->dueAmount = 0;
+                    $tenant->paidAmount = 0;
+                    $tenant->balance = 0;
+                    $tenant->percentagePaid = 0;
+                    return $tenant;
+                }
+                
+                $rentAmount = $apartment->rent;
+                $totalPaid = $tenant->payments->sum('amount');
+                
+                // Calculate payment details
+                $tenant->dueAmount = $rentAmount;
+                $tenant->paidAmount = $totalPaid;
+                $tenant->balance = max(0, $rentAmount - $totalPaid);
+                $tenant->percentagePaid = $rentAmount > 0 ? round(($totalPaid / $rentAmount) * 100) : 0;
+                
+                // Determine payment status with thresholds
+                if ($totalPaid == 0) {
+                    $tenant->paymentStatus = 'unpaid';
+                    $tenant->hasPaid = false;
+                    $tenant->isPartial = false;
+                } elseif ($totalPaid >= $rentAmount) {
+                    $tenant->paymentStatus = 'paid';
+                    $tenant->hasPaid = true;
+                    $tenant->isPartial = false;
+                } elseif ($totalPaid >= ($rentAmount * 0.5)) { // At least 50% paid
+                    $tenant->paymentStatus = 'partial_high';
+                    $tenant->hasPaid = true;
+                    $tenant->isPartial = true;
+                } else {
+                    $tenant->paymentStatus = 'partial_low';
+                    $tenant->hasPaid = true;
+                    $tenant->isPartial = true;
+                }
+                
+                // Get payment dates
+                $tenant->lastPaymentDate = $tenant->payments->sortByDesc('created_at')->first()->created_at ?? null;
+                $tenant->paymentCount = $tenant->payments->count();
+                
                 return $tenant;
             });
 
+        // Filter based on selected status
         if ($status === 'unpaid') {
             return $tenants->where('paymentStatus', 'unpaid')->values();
+        } elseif ($status === 'partial') {
+            return $tenants->whereIn('paymentStatus', ['partial_low', 'partial_high'])->values();
+        } elseif ($status === 'partial_high') {
+            return $tenants->where('paymentStatus', 'partial_high')->values();
+        } elseif ($status === 'partial_low') {
+            return $tenants->where('paymentStatus', 'partial_low')->values();
         } elseif ($status === 'paid') {
             return $tenants->where('paymentStatus', 'paid')->values();
+        } elseif ($status === 'all') {
+            return $tenants->values();
         }
         
         return $tenants;
     }
 
     /**
-     * Build reminder message
+     * Send bulk SMS to selected tenants
      */
-    private function buildReminderMessage($tenant, $month)
+    public function sendBulkSms(Request $request)
+    {
+        session()->forget(['sent_messages', 'failed_messages']);
+        
+        $request->validate([
+            'month' => 'required|date_format:Y-m',
+            'message_type' => 'required|in:reminder,partial_reminder,balance_reminder,custom',
+            'custom_message' => 'nullable|string|max:160',
+            'tenant_ids' => 'required|array|min:1',
+            'tenant_ids.*' => 'exists:tenants,id'
+        ]);
+
+        $selectedMonth = $request->month;
+        $messageType = $request->message_type;
+        $customMessage = $request->custom_message;
+        $selectedTenantIds = $request->tenant_ids ?? [];
+        
+        // Get tenants with their payment details
+        $tenants = Tenant::whereIn('id', $selectedTenantIds)
+            ->whereNotNull('phone')
+            ->with(['apartment', 'payments' => function($query) use ($selectedMonth) {
+                $query->where('status', 'paid')
+                      ->where(function($q) use ($selectedMonth) {
+                          $q->whereRaw("DATE_FORMAT(month, '%Y-%m') = ?", [$selectedMonth])
+                            ->orWhereJsonContains('allocated_months', $selectedMonth);
+                      });
+            }])
+            ->get()
+            ->map(function($tenant) use ($selectedMonth) {
+                $apartment = $tenant->apartment;
+                $rentAmount = $apartment ? $apartment->rent : 0;
+                $totalPaid = $tenant->payments->sum('amount');
+                
+                $tenant->dueAmount = $rentAmount;
+                $tenant->paidAmount = $totalPaid;
+                $tenant->balance = max(0, $rentAmount - $totalPaid);
+                
+                // Determine payment status
+                if ($totalPaid == 0) {
+                    $tenant->paymentStatus = 'unpaid';
+                } elseif ($totalPaid >= $rentAmount) {
+                    $tenant->paymentStatus = 'paid';
+                } else {
+                    $tenant->paymentStatus = 'partial';
+                }
+                
+                return $tenant;
+            });
+
+        if ($tenants->isEmpty()) {
+            return redirect()->back()
+                ->with('error', 'No valid tenants selected for SMS sending.')
+                ->withInput();
+        }
+
+        $sentCount = 0;
+        $failedCount = 0;
+        $sentMessages = [];
+        $failedMessages = [];
+
+        foreach ($tenants as $tenant) {
+            try {
+                if (!$tenant->phone) {
+                    $failedCount++;
+                    $failedMessages[] = [
+                        'tenant' => $tenant->name,
+                        'reason' => 'No phone number',
+                        'apartment' => $tenant->apartment->number ?? 'N/A',
+                        'status' => $tenant->paymentStatus
+                    ];
+                    continue;
+                }
+
+                // Build appropriate message based on type and payment status
+                $message = $this->buildMessage($tenant, $selectedMonth, $messageType, $customMessage);
+
+                // Send SMS
+                $response = $this->smsService->sendSms($tenant->phone, $message);
+                
+                if ($this->smsService->isSuccess($response)) {
+                    $sentCount++;
+                    $sentMessages[] = [
+                        'tenant' => $tenant->name,
+                        'phone' => $this->maskPhone($tenant->phone),
+                        'message' => $message,
+                        'apartment' => $tenant->apartment->number ?? 'N/A',
+                        'status' => $tenant->paymentStatus,
+                        'paid' => number_format($tenant->paidAmount),
+                        'balance' => number_format($tenant->balance)
+                    ];
+                    
+                    Log::info('Bulk SMS sent', [
+                        'tenant_id' => $tenant->id,
+                        'phone' => $this->maskPhone($tenant->phone),
+                        'month' => $selectedMonth,
+                        'payment_status' => $tenant->paymentStatus,
+                        'amount_paid' => $tenant->paidAmount,
+                        'balance' => $tenant->balance
+                    ]);
+                } else {
+                    $failedCount++;
+                    $failedMessages[] = [
+                        'tenant' => $tenant->name,
+                        'reason' => 'SMS API failed',
+                        'response' => $response,
+                        'apartment' => $tenant->apartment->number ?? 'N/A',
+                        'status' => $tenant->paymentStatus
+                    ];
+                }
+                
+                // Small delay to avoid rate limiting
+                usleep(100000);
+                
+            } catch (\Exception $e) {
+                $failedCount++;
+                $failedMessages[] = [
+                    'tenant' => $tenant->name,
+                    'reason' => 'Exception: ' . $e->getMessage(),
+                    'apartment' => $tenant->apartment->number ?? 'N/A',
+                    'status' => $tenant->paymentStatus
+                ];
+                Log::error('Bulk SMS error', [
+                    'tenant_id' => $tenant->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        return redirect()->route('admin.sms.bulk-sms')
+            ->with('success', "Successfully sent {$sentCount} SMS messages. Failed: {$failedCount}")
+            ->with('sent_messages', $sentMessages)
+            ->with('failed_messages', $failedMessages);
+    }
+
+    /**
+     * Build appropriate message based on type and payment status
+     */
+    private function buildMessage($tenant, $month, $messageType, $customMessage = null)
     {
         $tenantName = $this->cleanForSms($tenant->name);
         $apartmentNumber = $tenant->apartment ? $this->cleanForSms($tenant->apartment->number) : 'N/A';
-        $rent = $tenant->apartment ? number_format($tenant->apartment->rent) : '0';
+        $totalRent = $tenant->dueAmount;
+        $paidAmount = $tenant->paidAmount;
+        $balance = $tenant->balance;
         $monthName = Carbon::createFromFormat('Y-m', $month)->format('F Y');
+        $nextMonth = Carbon::createFromFormat('Y-m', $month)->addMonth()->format('F Y');
         
-        return "Hello {$tenantName}, rent reminder for {$monthName}. " .
-               "Apartment {$apartmentNumber}: UGX {$rent}. " .
-               "Due date: 5th {$monthName}. " .
-               "Late fees apply after due date. Thank you! - PhilWil Apartments";
+        if ($messageType === 'custom' && $customMessage) {
+            return $this->personalizeMessage($customMessage, $tenant, $month);
+        }
+        
+        if ($messageType === 'partial_reminder' || $messageType === 'balance_reminder') {
+            // Specialized partial payment messages
+            if ($paidAmount == 0) {
+                return "Hello {$tenantName}, rent reminder for {$monthName}. " .
+                       "Apartment {$apartmentNumber}: UGX " . number_format($totalRent) . " due. " .
+                       "Please pay by 5th {$monthName}. Late fees apply. - PhilWil Apartments";
+            } elseif ($balance > 0) {
+                return "Hello {$tenantName}, balance reminder for {$monthName}. " .
+                       "Apartment {$apartmentNumber}: Paid UGX " . number_format($paidAmount) . ". " .
+                       "Balance: UGX " . number_format($balance) . " of UGX " . number_format($totalRent) . ". " .
+                       "Please clear balance immediately to avoid penalties. - PhilWil Apartments";
+            } else {
+                return "Hello {$tenantName}, thank you for full payment for {$monthName}. " .
+                       "Apartment {$apartmentNumber}: UGX " . number_format($totalRent) . " received. " .
+                       "Next payment due: {$nextMonth}. - PhilWil Apartments";
+            }
+        }
+        
+        // Default reminder (adaptive based on payment status)
+        if ($paidAmount == 0) {
+            return "Hello {$tenantName}, rent for {$monthName} is due. " .
+                   "Apartment {$apartmentNumber}: UGX " . number_format($totalRent) . ". " .
+                   "Due date: 5th {$monthName}. Late fee: 10% after due date. - PhilWil Apartments";
+        } elseif ($balance > 0) {
+            $percentagePaid = $totalRent > 0 ? round(($paidAmount / $totalRent) * 100) : 0;
+            return "Hello {$tenantName}, partial payment noted for {$monthName}. " .
+                   "Apartment {$apartmentNumber}: UGX " . number_format($paidAmount) . " paid ({$percentagePaid}%). " .
+                   "Outstanding: UGX " . number_format($balance) . ". " .
+                   "Please complete payment by 5th {$monthName}. - PhilWil Apartments";
+        } else {
+            return "Hello {$tenantName}, payment confirmed for {$monthName}. " .
+                   "Apartment {$apartmentNumber}: UGX " . number_format($totalRent) . " received. " .
+                   "Thank you for timely payment. Next due: {$nextMonth}. - PhilWil Apartments";
+        }
     }
 
     /**
@@ -210,57 +316,64 @@ class SmsController extends Controller
      */
     private function personalizeMessage($message, $tenant, $month)
     {
+        $totalRent = $tenant->dueAmount;
+        $paidAmount = $tenant->paidAmount;
+        $balance = $tenant->balance;
+        $percentagePaid = $totalRent > 0 ? round(($paidAmount / $totalRent) * 100) : 0;
+        
         $replacements = [
             '{{tenant_name}}' => $this->cleanForSms($tenant->name),
+            '{{tenant_name}}' => $this->cleanForSms($tenant->name),
             '{{apartment_number}}' => $tenant->apartment ? $this->cleanForSms($tenant->apartment->number) : 'N/A',
-            '{{rent_amount}}' => $tenant->apartment ? number_format($tenant->apartment->rent) : '0',
+            '{{rent_amount}}' => number_format($totalRent),
             '{{month}}' => Carbon::createFromFormat('Y-m', $month)->format('F Y'),
             '{{phone}}' => $this->maskPhone($tenant->phone),
-            '{{balance}}' => $tenant->apartment ? number_format($tenant->apartment->rent) : '0'
+            '{{balance}}' => number_format($balance),
+            '{{paid_amount}}' => number_format($paidAmount),
+            '{{percentage_paid}}' => $percentagePaid,
+            '{{payment_status}}' => $tenant->paymentStatus,
+            '{{due_date}}' => '5th ' . Carbon::createFromFormat('Y-m', $month)->format('F Y'),
+            '{{next_month}}' => Carbon::createFromFormat('Y-m', $month)->addMonth()->format('F Y')
         ];
 
         return str_replace(array_keys($replacements), array_values($replacements), $message);
     }
 
-   
-/**
- * Get available months with payments - FIXED: Ensure proper Y-m format
- */
-private function getAvailableMonths()
-{
-    try {
-        $months = Payment::selectRaw("DATE_FORMAT(month, '%Y-%m') as month")
-            ->distinct()
-            ->orderBy('month', 'desc')
-            ->pluck('month');
+    /**
+     * Get available months with payments
+     */
+    private function getAvailableMonths()
+    {
+        try {
+            $months = Payment::selectRaw("DATE_FORMAT(month, '%Y-%m') as month")
+                ->distinct()
+                ->orderBy('month', 'desc')
+                ->pluck('month');
+                
+            // Add current and next 3 months
+            $current = now();
+            $additionalMonths = collect();
             
-        // Add current and next 3 months
-        $current = now();
-        $additionalMonths = collect();
-        
-        for ($i = -3; $i <= 3; $i++) {
-            $month = $current->copy()->addMonths($i)->format('Y-m');
-            $additionalMonths->push($month);
+            for ($i = -3; $i <= 3; $i++) {
+                $month = $current->copy()->addMonths($i)->format('Y-m');
+                $additionalMonths->push($month);
+            }
+            
+            // Combine and ensure unique
+            $allMonths = $months->concat($additionalMonths)
+                ->unique()
+                ->filter(function($month) {
+                    return preg_match('/^\d{4}-\d{2}$/', $month);
+                })
+                ->values();
+                
+            return $allMonths;
+            
+        } catch (\Exception $e) {
+            Log::error('Error getting available months', ['error' => $e->getMessage()]);
+            return collect([now()->format('Y-m')]);
         }
-        
-        // Combine and ensure unique, valid Y-m format
-        $allMonths = $months->concat($additionalMonths)
-            ->unique()
-            ->filter(function($month) {
-                // Validate that it's in Y-m format
-                return preg_match('/^\d{4}-\d{2}$/', $month);
-            })
-            ->values();
-            
-        return $allMonths;
-        
-    } catch (\Exception $e) {
-        Log::error('Error getting available months', ['error' => $e->getMessage()]);
-        
-        // Fallback: return at least current month
-        return collect([now()->format('Y-m')]);
     }
-}
 
     /**
      * Clean text for SMS
