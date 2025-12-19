@@ -36,48 +36,41 @@ class Apartment extends Model
     }
 
     /**
-     * NEW METHOD: Get the ACTUAL amount paid in a specific calendar month
-     * This is for commission calculation - only count money when it was received
-     * 
+     * Get the ACTUAL amount paid in a specific calendar month.
+     * Uses a unique filter to avoid double-counting the same payment record.
+     *
      * @param string $month Format: Y-m (e.g., '2025-01')
      * @return float
      */
     public function getActualAmountPaidInMonth($month)
     {
-        return $this->payments()
-            ->where('status', 'paid')
-            ->where(function($query) use ($month) {
-                // Check actual_payment_date first
-                $query->whereRaw("DATE_FORMAT(actual_payment_date, '%Y-%m') = ?", [$month])
-                      // Or fall back to paid_at if actual_payment_date is null
-                      ->orWhere(function($q) use ($month) {
-                          $q->whereNull('actual_payment_date')
-                            ->whereRaw("DATE_FORMAT(paid_at, '%Y-%m') = ?", [$month]);
-                      });
-            })
-            ->sum('amount');
+        $payments = $this->getPaymentsActuallyMadeInMonth($month);
+        return $payments->sum('amount');
     }
 
     /**
-     * NEW METHOD: Get payments that were ACTUALLY made in a specific calendar month
-     * (not allocated to that month, but physically received)
-     * 
-     * @param string $month Format: Y-m (e.g., '2025-01')
-     * @return \Illuminate\Database\Eloquent\Collection
-     */
-    public function getPaymentsActuallyMadeInMonth($month)
-    {
-        return $this->payments()
-            ->where('status', 'paid')
-            ->where(function($query) use ($month) {
-                $query->whereRaw("DATE_FORMAT(actual_payment_date, '%Y-%m') = ?", [$month])
-                      ->orWhere(function($q) use ($month) {
-                          $q->whereNull('actual_payment_date')
-                            ->whereRaw("DATE_FORMAT(paid_at, '%Y-%m') = ?", [$month]);
-                      });
-            })
-            ->get();
-    }
+ * Get payments that were ACTUALLY made in a specific calendar month
+ * (not allocated to that month, but physically received)
+ * 
+ * @param string $month Format: Y-m (e.g., '2025-01')
+ * @return \Illuminate\Database\Eloquent\Collection
+ */
+public function getPaymentsActuallyMadeInMonth($month)
+{
+    return $this->payments()
+        ->select('payments.*')
+        ->where('status', 'paid')
+        ->where(function($query) use ($month) {
+            $query->whereRaw("DATE_FORMAT(actual_payment_date, '%Y-%m') = ?", [$month])
+                  ->orWhere(function($q) use ($month) {
+                      $q->whereNull('actual_payment_date')
+                        ->whereRaw("DATE_FORMAT(paid_at, '%Y-%m') = ?", [$month]);
+                  });
+        })
+        ->get()
+        ->unique('id')
+        ->values(); // REMOVED the coversMonth filter!
+}
 
     /**
      * NEW METHOD: Check if this month is covered by a PREVIOUS advance payment
@@ -244,4 +237,23 @@ class Apartment extends Model
         
         return $this->rent;
     }
+
+    // In Apartment model
+public function getPaymentsCoveringMonth($month)
+{
+    return $this->payments()
+        ->where('status', 'paid')
+        ->get()
+        ->filter(function($payment) use ($month) {
+            return $payment->coversMonth($month);
+        });
+}
+
+public function getTotalAmountCoveringMonth($month)
+{
+    $payments = $this->getPaymentsCoveringMonth($month);
+    return $payments->sum(function($payment) use ($month) {
+        return $payment->getAmountForMonth($month);
+    });
+}
 }
