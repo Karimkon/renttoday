@@ -208,6 +208,14 @@
                                     <a href="{{ route('admin.payments.show', $payment) }}" class="btn btn-info" title="View Details">
                                         <i class="bi bi-eye"></i>
                                     </a>
+
+                                    <!-- Receipt Button -->
+                                    <a href="{{ route('admin.payments.receipt', $payment) }}" 
+                                    class="btn btn-success" 
+                                    title="Download Receipt"
+                                    target="_blank">
+                                        <i class="bi bi-receipt"></i>
+                                    </a>
                                     
                                     <!-- Edit Button -->
                                     <a href="{{ route('admin.payments.edit', $payment) }}" class="btn btn-warning" title="Edit Payment">

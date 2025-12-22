@@ -9,6 +9,8 @@ use App\Models\Tenant;
 use App\Models\Apartment;
 use App\Models\Landlord;
 use App\Models\LatePaymentFee;
+use Barryvdh\DomPDF\Facade\Pdf; // ADD THIS LINE
+use Illuminate\Support\Facades\Mail;
 use App\Services\PesapalService;
 use Carbon\Carbon;
 use App\Services\RentReminderService;
@@ -639,4 +641,113 @@ public function update(Request $request, Payment $payment)
             return back()->with('error', 'Error sending reminder: ' . $e->getMessage());
         }
     }
+
+    
+/**
+ * Download receipt PDF for a payment
+ */
+public function downloadReceipt(Payment $payment)
+{
+    try {
+        $receiptData = $payment->getReceiptData();
+        
+        // For shared hosting: Use simple HTML view first
+        $html = view('admin.payments.receipt-pdf', compact('receiptData'))->render();
+        
+        // Configure DomPDF for shared hosting
+        $pdf = Pdf::loadHTML($html);
+        
+        // Set paper and orientation
+        $pdf->setPaper('A4', 'portrait');
+        
+        // CRITICAL: Set DomPDF options for shared hosting
+        $pdf->setOptions([
+            'isHtml5ParserEnabled' => true,
+            'isRemoteEnabled' => false, // Disable remote URLs
+            'chroot' => base_path(), // Set root directory
+            'tempDir' => storage_path('temp'), // Set temp directory
+            'fontDir' => storage_path('fonts'), // Font directory
+            'fontCache' => storage_path('fonts'), // Font cache
+            'isFontSubsettingEnabled' => false, // Disable font subsetting
+            'defaultFont' => 'helvetica', // Use basic font
+            'debugPng' => false,
+            'debugKeepTemp' => false,
+            'debugCss' => false,
+            'debugLayout' => false,
+            'debugLayoutLines' => false,
+            'debugLayoutBlocks' => false,
+            'debugLayoutInline' => false,
+            'debugLayoutPaddingBox' => false,
+        ]);
+        
+        // Ensure temp directory exists
+        $tempDir = storage_path('temp');
+        if (!file_exists($tempDir)) {
+            mkdir($tempDir, 0755, true);
+        }
+        
+        $filename = 'payment-receipt-' . $payment->receipt_number . '.pdf';
+        
+        return $pdf->download($filename);
+        
+    } catch (\Exception $e) {
+        Log::error('Receipt generation error: ' . $e->getMessage() . 
+                  ' | Trace: ' . $e->getTraceAsString());
+        
+        // Fallback: Return HTML version for printing
+        return $this->generateHtmlFallback($payment);
+    }
+}
+
+/**
+ * Generate HTML fallback when PDF fails
+ */
+private function generateHtmlFallback(Payment $payment)
+{
+    try {
+        $receiptData = $payment->getReceiptData();
+        
+        return view('admin.payments.receipt-html', compact('receiptData'))
+            ->with('isHtmlFallback', true);
+            
+    } catch (\Exception $e) {
+        Log::error('HTML fallback error: ' . $e->getMessage());
+        
+        // Ultimate fallback: Simple text response
+        return response()->view('admin.payments.receipt-simple', [
+            'payment' => $payment,
+            'error' => 'PDF generation failed: ' . $e->getMessage()
+        ]);
+    }
+}
+
+/**
+ * Email receipt to tenant
+ */
+public function emailReceipt(Request $request, Payment $payment)
+{
+    $request->validate([
+        'email' => 'required|email'
+    ]);
+    
+    try {
+        $receiptData = $payment->getReceiptData();
+        
+        // Generate PDF - FIX: Change PDF:: to Pdf::
+        $pdf = Pdf::loadView('admin.payments.receipt-pdf', compact('receiptData'));
+        
+        // Email the receipt
+        Mail::send('emails.payment-receipt', compact('receiptData'), function($message) use ($request, $payment, $pdf) {
+            $message->to($request->email)
+                    ->subject('Payment Receipt - ' . $payment->receipt_number . ' - Rent Today')
+                    ->attachData($pdf->output(), 'payment-receipt-' . $payment->receipt_number . '.pdf');
+        });
+        
+        return back()->with('success', 'Receipt emailed successfully to ' . $request->email);
+        
+    } catch (\Exception $e) {
+        Log::error('Email receipt error: ' . $e->getMessage());
+        return back()->with('error', 'Failed to email receipt: ' . $e->getMessage());
+    }
+}
 }

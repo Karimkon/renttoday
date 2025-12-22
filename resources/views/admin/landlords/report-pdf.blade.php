@@ -66,16 +66,6 @@
             border-top: 1px solid #ccc;
             font-size: 9px;
         }
-        .small-note { 
-            font-size: 7px; 
-            color: #666; 
-            line-height: 1.1;
-        }
-        .advance-note {
-            font-size: 7px;
-            color: #17a2b8;
-            font-style: italic;
-        }
         .badge {
             padding: 2px 4px;
             border-radius: 3px;
@@ -86,19 +76,16 @@
         .badge-info { background-color: #17a2b8; color: white; }
         .badge-warning { background-color: #ffc107; color: black; }
         .badge-danger { background-color: #dc3545; color: white; }
-        .badge-secondary { background-color: #6c757d; color: white; }
     </style>
 </head>
 <body>
-    <!-- Header -->
     <div class="header">
         <h1>RENT TODAY - MANAGEMENT AGENCY</h1>
-        <h2>CLIENT'S MONTHLY REPORT FOR THE MONTH OF: {{ strtoupper($reportData['month']->format('F Y')) }}</h2>
+        <h2>CLIENT'S MONTHLY REPORT FOR: {{ strtoupper($reportData['month']->format('F Y')) }}</h2>
         <p><strong>CLIENT'S NAME:</strong> {{ strtoupper($reportData['landlord']->name) }}</p>
         <p><strong>PROPERTY LOCATION:</strong> {{ $locations->implode(' and ') }}</p>
         <p><strong>COMMISSION RATE:</strong> {{ $reportData['landlord']->commission_rate }}%</p>
         
-        <!-- Payment Status -->
         <p><strong>PAYMENT STATUS:</strong> 
             @if($reportData['landlordPaymentStatus']['paid'])
                 <strong style="color: #28a745;">PAID TO LANDLORD</strong>
@@ -109,7 +96,6 @@
         </p>
     </div>
 
-    <!-- Apartments by Location -->
     @foreach($locations as $location)
         @php
             $locationApartments = $reportData['apartments']->where('location', $location);
@@ -130,134 +116,63 @@
                     <th width="12%">Rent Paid</th>
                     <th width="12%">Commission</th>
                     <th width="12%">Amount</th>
-                    <th width="12%">Month/s Paid</th>
-                    <th width="14%">Date of payment</th>
-                    <th width="14%">Next of pyt</th>
+                    <th width="12%">Status</th>
+                    <th width="14%">Date of Pyt</th>
+                    <th width="14%">Next Pyt Due</th>
                 </tr>
             </thead>
             <tbody>
                 @foreach($locationApartments as $apartment)
-                @php
-                    $reportMonth = $reportData['month']->format('Y-m');
-                    
-                    // Get ACTUAL amount paid in this calendar month
-                    $actualAmountThisMonth = $apartment->getActualAmountPaidInMonth($reportMonth);
-                    
-                    // Check if covered by PREVIOUS advance
-                    $coveringAdvance = $apartment->getCoveringAdvancePayment($reportMonth);
-                    $coveredByPreviousAdvance = ($coveringAdvance !== null);
-                    
-                    // Get payments made this month
-                    $paymentsThisMonth = $apartment->getPaymentsActuallyMadeInMonth($reportMonth);
-                    $advancePaymentThisMonth = $paymentsThisMonth->where('is_advance_payment', true)->first();
-                    
-                    // Determine display
-                    if (!$apartment->tenant) {
-                        $rentPaidDisplay = 'UGX 0';
-                        $rentForCommission = 0;
-                        $statusDisplay = '<span class="badge badge-secondary">VACANT</span>';
-                        $nextPayment = '<span class="badge badge-secondary">VACANT</span>';
-                        $paymentDate = '-';
-                    } elseif ($coveredByPreviousAdvance && $actualAmountThisMonth == 0) {
-                        // Covered by PREVIOUS advance - NO commission
-                        $rentPaidDisplay = '<strong style="color: #17a2b8;">ADVANCE</strong>';
-                        $rentForCommission = 0;
-                        $statusDisplay = '<span class="badge badge-info">COVERED BY ADVANCE</span>';
-                        
-                        $advanceDate = $coveringAdvance->actual_payment_date 
-                            ? $coveringAdvance->actual_payment_date->format('jS/m/Y')
-                            : $coveringAdvance->paid_at->format('jS/m/Y');
-                        $paymentDate = '<small style="color: #17a2b8;">Adv: ' . $advanceDate . '</small>';
-                        
-                        $allocatedMonths = $coveringAdvance->allocated_months ?? [];
-                        if (count($allocatedMonths) > 0) {
-                            $lastMonth = \Carbon\Carbon::createFromFormat('Y-m', max($allocatedMonths));
-                            $nextPayment = $lastMonth->addMonth()->format('F Y');
-                        } else {
-                            $nextPayment = $reportData['month']->copy()->addMonth()->format('F Y');
-                        }
-                    } elseif ($advancePaymentThisMonth) {
-                        // ADVANCE payment made THIS month
-                        $rentPaidDisplay = 'UGX ' . number_format($actualAmountThisMonth);
-                        $rentForCommission = $actualAmountThisMonth;
-                        
-                        $monthsCovered = count($advancePaymentThisMonth->allocated_months ?? []);
-                        if ($monthsCovered == 0) {
-                            $monthsCovered = floor($actualAmountThisMonth / $apartment->rent);
-                        }
-                        
-                        $statusDisplay = '<span class="badge badge-success">' . $monthsCovered . ' MONTH' . ($monthsCovered > 1 ? 'S' : '') . ' ADVANCE</span>';
-                        
-                        $paymentDate = $advancePaymentThisMonth->actual_payment_date 
-                            ? $advancePaymentThisMonth->actual_payment_date->format('jS/m/Y')
-                            : $advancePaymentThisMonth->paid_at->format('jS/m/Y');
-                        
-                        $allocatedMonths = $advancePaymentThisMonth->allocated_months ?? [];
-                        if (count($allocatedMonths) > 0) {
-                            $lastMonth = \Carbon\Carbon::createFromFormat('Y-m', max($allocatedMonths));
-                            $nextPayment = $lastMonth->addMonth()->format('F Y');
-                        } else {
-                            $nextPayment = $reportData['month']->copy()->addMonths($monthsCovered)->format('F Y');
-                        }
-                    } elseif ($actualAmountThisMonth > 0) {
-                        // Regular payment
-                        $rentPaidDisplay = 'UGX ' . number_format($actualAmountThisMonth);
-                        $rentForCommission = $actualAmountThisMonth;
-                        
-                        if ($actualAmountThisMonth >= $apartment->rent) {
-                            $statusDisplay = '<span class="badge badge-success">' . $reportData['month']->format('F') . ' PAID</span>';
-                        } else {
-                            $statusDisplay = '<span class="badge badge-warning">PARTIAL</span>';
-                        }
-                        
-                        $firstPayment = $paymentsThisMonth->first();
-                        $paymentDate = $firstPayment->actual_payment_date 
-                            ? $firstPayment->actual_payment_date->format('jS/m/Y')
-                            : $firstPayment->paid_at->format('jS/m/Y');
-                        
-                        $nextPayment = $reportData['month']->copy()->addMonth()->format('F Y');
-                    } else {
-                        // UNPAID
-                        $rentPaidDisplay = 'UGX 0';
-                        $rentForCommission = 0;
-                        $statusDisplay = '<span class="badge badge-danger">UNPAID</span>';
-                        $paymentDate = '-';
-                        $nextPayment = '<span class="badge badge-danger">UNPAID</span>';
-                    }
-                    
-                    // Commission on ACTUAL money received
-                    $commission = $rentForCommission * ($reportData['landlord']->commission_rate / 100);
-                    $amountToLandlord = $rentForCommission - $commission;
-                    
-                    $locationTotal += $rentForCommission;
-                    $locationCommission += $commission;
-                    $locationAmount += $amountToLandlord;
-                @endphp
-                <tr>
-                    <td>{{ $apartment->number }}</td>
-                    <td>UGX {{ number_format($apartment->rent) }}</td>
-                    <td>{!! $rentPaidDisplay !!}</td>
-                    <td>UGX {{ number_format($commission) }}</td>
-                    <td>UGX {{ number_format($amountToLandlord) }}</td>
-                    <td>{!! $statusDisplay !!}</td>
-                    <td>{!! $paymentDate !!}</td>
-                    <td>{!! $nextPayment !!}</td>
-                </tr>
+                    @php 
+                        $data = $apartment->getReportDataForMonth($reportData['month']->format('Y-m'));
+                        $rentReceived = $data['cash_received'];
+                        $commission = $rentReceived * ($reportData['landlord']->commission_rate / 100);
+                        $netAmount = $rentReceived - $commission;
+
+                        // Increment location totals
+                        $locationTotal += $rentReceived;
+                        $locationCommission += $commission;
+                        $locationAmount += $netAmount;
+                    @endphp
+                    <tr>
+                        <td>{{ $apartment->number }}</td>
+                        <td>UGX {{ number_format($apartment->rent) }}</td>
+                        <td>
+                            @if($data['is_covered_by_advance'] && $rentReceived == 0)
+                                <span style="color: #17a2b8; font-weight: bold;">ADVANCE COVER</span>
+                            @else
+                                UGX {{ number_format($rentReceived) }}
+                            @endif
+                        </td>
+                        <td>UGX {{ number_format($commission) }}</td>
+                        <td>UGX {{ number_format($netAmount) }}</td>
+                        <td>
+                            @if($data['is_covered_by_advance'] && $rentReceived == 0)
+                                <span class="badge badge-info">ADVANCE</span>
+                            @elseif($rentReceived >= $apartment->rent)
+                                <span class="badge badge-success">PAID</span>
+                            @elseif($rentReceived > 0)
+                                <span class="badge badge-warning">PARTIAL</span>
+                            @else
+                                <span class="badge badge-danger">UNPAID</span>
+                            @endif
+                        </td>
+                        <td>{{ $data['recent_payment'] ? \Carbon\Carbon::parse($data['recent_payment']->paid_at)->format('d/m/Y') : '-' }}</td>
+                        <td>{{ $data['next_payment_label'] }}</td>
+                    </tr>
                 @endforeach
                 
-                <!-- Location Totals -->
                 <tr class="total-row">
-                    <td colspan="2"><strong>TOTAL {{ strtoupper($location) }}</strong></td>
-                    <td><strong>UGX {{ number_format($locationTotal) }}</strong></td>
-                    <td><strong>UGX {{ number_format($locationCommission) }}</strong></td>
-                    <td><strong>UGX {{ number_format($locationAmount) }}</strong></td>
+                    <td colspan="2">TOTAL {{ strtoupper($location) }}</td>
+                    <td>UGX {{ number_format($locationTotal) }}</td>
+                    <td>UGX {{ number_format($locationCommission) }}</td>
+                    <td>UGX {{ number_format($locationAmount) }}</td>
                     <td colspan="3"></td>
                 </tr>
             </tbody>
         </table>
     @endforeach
 
-    <!-- Grand Totals -->
     <div class="summary">
         <h4>SUMMARY FOR {{ strtoupper($reportData['month']->format('F Y')) }}</h4>
         <table style="width: 100%;">
@@ -274,23 +189,8 @@
                 <td class="text-right"><strong>UGX {{ number_format($reportData['amountDue']) }}</strong></td>
             </tr>
         </table>
-        
-        <table style="width: 100%; margin-top: 10px;">
-            <tr>
-                <td><strong>Payment Status:</strong></td>
-                <td class="text-right">
-                    @if($reportData['landlordPaymentStatus']['paid'])
-                        <strong style="color: #28a745;">✓ PAID TO LANDLORD</strong>
-                        <br><small style="color: #666;">Paid on: {{ \Carbon\Carbon::parse($reportData['landlordPaymentStatus']['paid_at'])->format('M j, Y g:i A') }}</small>
-                    @else
-                        <strong style="color: #ffc107;">⏳ PENDING PAYMENT</strong>
-                    @endif
-                </td>
-            </tr>
-        </table>
     </div>
 
-    <!-- Footer -->
     <div class="footer">
         <table style="width: 100%;">
             <tr>

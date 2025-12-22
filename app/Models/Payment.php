@@ -72,6 +72,110 @@ class Payment extends Model
         ];
     }
 
+    /**
+ * Generate a receipt number for this payment
+ */
+public function getReceiptNumberAttribute()
+{
+    return 'RENT-TDY-' . str_pad($this->id, 6, '0', STR_PAD_LEFT) . '-' . 
+           $this->created_at->format('ym');
+}
+
+/**
+ * Get receipt data for PDF generation
+ */
+public function getReceiptData()
+{
+    return [
+        'receipt_number' => $this->receipt_number,
+        'payment_date' => $this->actual_payment_date ?? $this->paid_at ?? now(),
+        'tenant_name' => $this->tenant->name,
+        'tenant_phone' => $this->tenant->phone,
+        'tenant_email' => $this->tenant->email,
+        'apartment_number' => $this->apartment->number,
+        'apartment_location' => $this->apartment->location,
+        'landlord_name' => $this->apartment->landlord->name ?? 'N/A',
+        'month' => \Carbon\Carbon::parse($this->month)->format('F Y'),
+        'amount' => $this->amount,
+        'amount_in_words' => $this->convertNumberToWords($this->amount),
+        'payment_method' => $this->payment_method_label,
+        'reference_number' => $this->reference_number,
+        'processed_by' => $this->processedBy->name ?? 'System',
+        'notes' => $this->notes,
+        'is_advance_payment' => $this->is_advance_payment,
+        'months_covered' => $this->is_advance_payment ? $this->months_covered : 1,
+        'company_name' => 'Rent Today Management Agency',
+        'company_address' => 'Kampala, Uganda',
+        'company_phone' => '+256 700 123 456',
+        'company_email' => 'info@renttoday.site',
+        'thank_you_message' => 'Thank you for your timely payment. We appreciate your trust in our services.'
+    ];
+}
+
+/**
+ * Convert number to words for receipt
+ */
+private function convertNumberToWords($num)
+{
+    $ones = [
+        0 => '', 1 => 'One', 2 => 'Two', 3 => 'Three', 4 => 'Four',
+        5 => 'Five', 6 => 'Six', 7 => 'Seven', 8 => 'Eight', 9 => 'Nine',
+        10 => 'Ten', 11 => 'Eleven', 12 => 'Twelve', 13 => 'Thirteen',
+        14 => 'Fourteen', 15 => 'Fifteen', 16 => 'Sixteen', 17 => 'Seventeen',
+        18 => 'Eighteen', 19 => 'Nineteen'
+    ];
+    
+    $tens = [
+        2 => 'Twenty', 3 => 'Thirty', 4 => 'Forty', 5 => 'Fifty',
+        6 => 'Sixty', 7 => 'Seventy', 8 => 'Eighty', 9 => 'Ninety'
+    ];
+    
+    $thousands = ['', 'Thousand', 'Million'];
+    
+    if ($num == 0) return 'Zero Shillings';
+    
+    $words = [];
+    $shillings = floor($num);
+    
+    if ($shillings > 0) {
+        $index = 0;
+        while ($shillings > 0) {
+            $chunk = $shillings % 1000;
+            if ($chunk) {
+                $chunkWords = [];
+                
+                $hundreds = floor($chunk / 100);
+                if ($hundreds) {
+                    $chunkWords[] = $ones[$hundreds] . ' Hundred';
+                }
+                
+                $remainder = $chunk % 100;
+                if ($remainder < 20 && $remainder > 0) {
+                    $chunkWords[] = $ones[$remainder];
+                } elseif ($remainder >= 20) {
+                    $tensDigit = floor($remainder / 10);
+                    $onesDigit = $remainder % 10;
+                    $chunkWords[] = $tens[$tensDigit];
+                    if ($onesDigit > 0) {
+                        $chunkWords[] = $ones[$onesDigit];
+                    }
+                }
+                
+                if ($index > 0) {
+                    $chunkWords[] = $thousands[$index];
+                }
+                
+                array_unshift($words, implode(' ', $chunkWords));
+            }
+            
+            $shillings = floor($shillings / 1000);
+            $index++;
+        }
+    }
+    
+    return implode(' ', $words) . ' Uganda Shillings Only';
+}
+
     public function tenant()
     {
         return $this->belongsTo(Tenant::class);

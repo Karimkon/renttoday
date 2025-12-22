@@ -149,6 +149,11 @@ Route::prefix('payments')->name('payments.')->group(function () {
     Route::delete('/{payment}', [AdminPaymentController::class, 'destroy'])->name('destroy');
     Route::post('/{payment}/mark-paid', [AdminPaymentController::class, 'markAsPaid'])->name('mark-paid');
     Route::get('/pesapal/callback', [AdminPaymentController::class, 'pesapalCallback'])->name('pesapal-callback');
+     Route::get('{payment}/receipt', [AdminPaymentController::class, 'downloadReceipt'])
+        ->name('receipt');
+    
+    Route::post('{payment}/email-receipt', [AdminPaymentController::class, 'emailReceipt'])
+        ->name('email-receipt');
 });
 
     // Landlords 
