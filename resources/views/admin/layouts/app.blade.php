@@ -145,6 +145,11 @@
             <i class="bi bi-person-badge"></i> Manage Landlords
         </a>
 
+        <a href="{{ route('admin.landlords.index') }}" 
+        class="{{ request()->routeIs('admin.landlords.*') ? 'active text-white' : '' }}">
+            <i class="bi bi-cash-coin"></i> Landlord Expenses
+        </a>
+
         <a href="{{ route('admin.tenants.index') }}" 
            class="{{ request()->routeIs('admin.tenants.*') ? 'active text-white' : '' }}">
             <i class="bi bi-person-lines-fill"></i> Manage Tenants

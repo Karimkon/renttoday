@@ -13,7 +13,7 @@ class Payment extends Model
 
     protected $fillable = [
         'tenant_id',
-        'apartment_id', 
+        'apartment_id',
         'month',
         'amount',
         'payment_method',
@@ -27,7 +27,8 @@ class Payment extends Model
         'notes',
         'is_advance_payment',
         'allocated_months',
-        'original_amount'
+        'original_amount',
+        'paid_to_landlord_directly'
     ];
 
     protected $casts = [
@@ -37,7 +38,8 @@ class Payment extends Model
         'month' => 'date',
         'is_advance_payment' => 'boolean',
         'allocated_months' => 'array',
-        'original_amount' => 'decimal:2'
+        'original_amount' => 'decimal:2',
+        'paid_to_landlord_directly' => 'boolean'
     ];
 
     // Payment methods

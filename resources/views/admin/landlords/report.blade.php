@@ -85,10 +85,18 @@ use Carbon\Carbon;
                             @foreach($locationApartments as $apartment)
                                 @php
                                     $reportMonth = $reportData['month']->format('Y-m');
-                                    
+
                                     // Get ALL payments made in this month (not just covering this month)
+                                    // FIX: This now correctly filters out advance payment split records
                                     $allPaymentsMadeThisMonth = $apartment->getPaymentsActuallyMadeInMonth($reportMonth);
-                                    $totalAmountPaidThisMonth = $allPaymentsMadeThisMonth->sum('amount');
+
+                                    // FIX: Calculate total correctly - for advance payments use original_amount
+                                    $totalAmountPaidThisMonth = $allPaymentsMadeThisMonth->sum(function($payment) {
+                                        if ($payment->is_advance_payment && $payment->original_amount) {
+                                            return $payment->original_amount;
+                                        }
+                                        return $payment->amount;
+                                    });
                                     
                                     // Check if this includes advance payments
                                     $advancePaymentsThisMonth = $allPaymentsMadeThisMonth->where('is_advance_payment', true);
@@ -172,12 +180,18 @@ use Carbon\Carbon;
                                             }
                                         } else {
                                             // Regular single month payment
-                                            $statusDisplay = '<span class="badge bg-success">' . $reportData['month']->format('F') . ' PAID</span>';
+                                            $payment = $allPaymentsMadeThisMonth->first();
+                                            $paidDirectlyToLandlord = $payment->paid_to_landlord_directly ?? false;
+
+                                            if ($paidDirectlyToLandlord) {
+                                                $statusDisplay = '<span class="badge bg-info">' . $reportData['month']->format('F') . ' PAID</span><br><small class="text-info">Direct to Landlord</small>';
+                                            } else {
+                                                $statusDisplay = '<span class="badge bg-success">' . $reportData['month']->format('F') . ' PAID</span>';
+                                            }
                                             $statusClass = '';
                                             $monthsCovered = 1;
-                                            
-                                            $payment = $allPaymentsMadeThisMonth->first();
-                                            $paymentDate = $payment->actual_payment_date 
+
+                                            $paymentDate = $payment->actual_payment_date
                                                 ? $payment->actual_payment_date->format('jS/m/Y')
                                                 : $payment->paid_at->format('jS/m/Y');
                                             $nextPayment = $reportData['month']->copy()->addMonth()->format('F Y');
@@ -291,6 +305,84 @@ use Carbon\Carbon;
                 </div>
             @endforeach
 
+            <!-- Expenses Section -->
+            @if(isset($reportData['expenses']) && $reportData['expenses']->count() > 0)
+            <div class="row mt-4">
+                <div class="col-12">
+                    <div class="card border-warning">
+                        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">EXPENSES FOR {{ strtoupper($reportData['month']->format('F Y')) }}</h6>
+                            <a href="{{ route('admin.landlords.expenses.create', ['landlord' => $reportData['landlord']->id, 'month' => $reportData['month']->format('Y-m')]) }}"
+                               class="btn btn-sm btn-dark">
+                                <i class="bi bi-plus-circle"></i> Add Expense
+                            </a>
+                              <a href="{{ route('admin.landlords.expenses.index', $reportData['landlord']) }}?month={{ $reportData['month']->format('Y-m') }}"
+                            class="btn btn-sm btn-outline-info">
+                                <i class="bi bi-list-check"></i> View All Expenses
+                            </a>
+                        </div>
+                        <div class="card-body">
+                            <table class="table table-sm table-bordered">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Description</th>
+                                        <th>Category</th>
+                                        <th>Apartment</th>
+                                        <th>Amount</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($reportData['expenses'] as $expense)
+                                    <tr>
+                                        <td>{{ $expense->expense_date->format('M j, Y') }}</td>
+                                        <td>{{ $expense->description }}</td>
+                                        <td><span class="badge bg-secondary">{{ $expense->category_label }}</span></td>
+                                        <td>{{ $expense->apartment ? $expense->apartment->number : 'General' }}</td>
+                                        <td class="text-danger fw-bold">UGX {{ number_format($expense->amount) }}</td>
+                                        <td>
+                                            <a href="{{ route('admin.landlords.expenses.edit', ['landlord' => $reportData['landlord']->id, 'expense' => $expense->id]) }}"
+                                               class="btn btn-sm btn-outline-primary">
+                                                <i class="bi bi-pencil"></i>
+                                            </a>
+                                            <form action="{{ route('admin.landlords.expenses.destroy', ['landlord' => $reportData['landlord']->id, 'expense' => $expense->id]) }}"
+                                                  method="POST" class="d-inline"
+                                                  onsubmit="return confirm('Delete this expense?')">
+                                                @csrf
+                                                @method('DELETE')
+                                                <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    @endforeach
+                                    <tr class="table-warning fw-bold">
+                                        <td colspan="4">TOTAL EXPENSES</td>
+                                        <td class="text-danger">UGX {{ number_format($reportData['totalExpenses']) }}</td>
+                                        <td></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            @else
+            <div class="row mt-4">
+                <div class="col-12">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="text-muted">No expenses recorded for this month</span>
+                        <a href="{{ route('admin.landlords.expenses.create', ['landlord' => $reportData['landlord']->id, 'month' => $reportData['month']->format('Y-m')]) }}"
+                           class="btn btn-sm btn-outline-warning">
+                            <i class="bi bi-plus-circle"></i> Add Expense
+                        </a>
+                    </div>
+                </div>
+            </div>
+            @endif
+
             <!-- Grand Totals -->
             <div class="row mt-4">
                 <div class="col-md-6">
@@ -298,22 +390,28 @@ use Carbon\Carbon;
                         <div class="card-body">
                             <h6>SUMMARY FOR {{ strtoupper($reportData['month']->format('F Y')) }}</h6>
                             <table class="table table-sm table-borderless">
-                               <tr>
-    <td>Total Rent Paid in {{ $reportData['month']->format('F') }}:</td>
-    <td class="fw-bold">UGX {{ number_format($reportData['totalDisplayRent']) }}</td>
-</tr>
-<tr>
-    <td>Commissionable Amount:</td>
-    <td class="fw-bold">UGX {{ number_format($reportData['totalCommissionRent']) }}</td>
-</tr>
-<tr>
-    <td>Total Commission ({{ $reportData['landlord']->commission_rate }}%):</td>
-    <td class="fw-bold">UGX {{ number_format($reportData['totalCommission']) }}</td>
-</tr>
-<tr class="border-top">
-    <td>Amount Due to Landlord:</td>
-    <td class="fw-bold text-success">UGX {{ number_format($reportData['amountDue']) }}</td>
-</tr>
+                                <tr>
+                                    <td>Total Rent Paid in {{ $reportData['month']->format('F') }}:</td>
+                                    <td class="fw-bold">UGX {{ number_format($reportData['totalDisplayRent']) }}</td>
+                                </tr>
+                                <tr>
+                                    <td>Commissionable Amount:</td>
+                                    <td class="fw-bold">UGX {{ number_format($reportData['totalCommissionRent']) }}</td>
+                                </tr>
+                                <tr>
+                                    <td>Total Commission ({{ $reportData['landlord']->commission_rate }}%):</td>
+                                    <td class="fw-bold text-danger">- UGX {{ number_format($reportData['totalCommission']) }}</td>
+                                </tr>
+                                @if(isset($reportData['totalExpenses']) && $reportData['totalExpenses'] > 0)
+                                <tr>
+                                    <td>Total Expenses Deducted:</td>
+                                    <td class="fw-bold text-danger">- UGX {{ number_format($reportData['totalExpenses']) }}</td>
+                                </tr>
+                                @endif
+                                <tr class="border-top">
+                                    <td>Amount Due to Landlord:</td>
+                                    <td class="fw-bold text-success fs-5">UGX {{ number_format($reportData['amountDue']) }}</td>
+                                </tr>
                                 <tr class="border-top">
                                     <td>Payment Status:</td>
                                     <td class="fw-bold">

@@ -35,6 +35,30 @@ class Landlord extends Model
     }
 
     /**
+     * Get all expenses for this landlord
+     */
+    public function expenses()
+    {
+        return $this->hasMany(LandlordExpense::class);
+    }
+
+    /**
+     * Get expenses for a specific month
+     */
+    public function getExpensesForMonth($month)
+    {
+        return $this->expenses()->where('month', $month)->get();
+    }
+
+    /**
+     * Get total expenses for a specific month
+     */
+    public function getTotalExpensesForMonth($month)
+    {
+        return $this->expenses()->where('month', $month)->sum('amount');
+    }
+
+    /**
      * Get all report notes for this landlord.
      */
     public function reportNotes()

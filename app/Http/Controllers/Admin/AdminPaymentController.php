@@ -9,7 +9,7 @@ use App\Models\Tenant;
 use App\Models\Apartment;
 use App\Models\Landlord;
 use App\Models\LatePaymentFee;
-use Barryvdh\DomPDF\Facade\Pdf; // ADD THIS LINE
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Mail;
 use App\Services\PesapalService;
 use Carbon\Carbon;
@@ -97,6 +97,62 @@ class AdminPaymentController extends Controller
         return view('admin.payments.create', compact('tenants'));
     }
 
+    /**
+     * Get payment status for a tenant for a specific month (AJAX endpoint)
+     * Returns remaining balance and payment info
+     */
+    public function getPaymentStatus(Request $request)
+    {
+        $request->validate([
+            'tenant_id' => 'required|exists:tenants,id',
+            'month' => 'required|date_format:Y-m'
+        ]);
+
+        $tenant = Tenant::with('apartment')->findOrFail($request->tenant_id);
+        $apartment = $tenant->apartment;
+
+        if (!$apartment) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tenant has no apartment assigned'
+            ]);
+        }
+
+        $monthlyRent = $apartment->rent;
+
+        // Get existing payments for this month
+        $existingPayments = $apartment->payments()
+            ->where('status', 'paid')
+            ->get()
+            ->filter(function($payment) use ($request) {
+                return $payment->coversMonth($request->month);
+            });
+
+        $totalPaid = $existingPayments->sum(function($payment) use ($request) {
+            return $payment->getAmountForMonth($request->month);
+        });
+
+        $remainingBalance = max(0, $monthlyRent - $totalPaid);
+        $isFullyPaid = $totalPaid >= $monthlyRent;
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'monthly_rent' => $monthlyRent,
+                'total_paid' => $totalPaid,
+                'remaining_balance' => $remainingBalance,
+                'is_fully_paid' => $isFullyPaid,
+                'suggested_amount' => $remainingBalance > 0 ? $remainingBalance : $monthlyRent,
+                'payment_count' => $existingPayments->count(),
+                'message' => $isFullyPaid
+                    ? 'This month is fully paid (UGX ' . number_format($totalPaid) . ')'
+                    : ($totalPaid > 0
+                        ? 'Partial payment made: UGX ' . number_format($totalPaid) . '. Remaining: UGX ' . number_format($remainingBalance)
+                        : 'No payments yet for this month')
+            ]
+        ]);
+    }
+
     public function store(Request $request)
     {
         $data = $request->validate([
@@ -106,7 +162,8 @@ class AdminPaymentController extends Controller
             'payment_method' => 'required|in:cash,pesapal,bank_transfer,mobile_money',
             'reference_number' => 'nullable|string|max:100',
             'actual_payment_date' => 'nullable|date',
-            'notes' => 'nullable|string'
+            'notes' => 'nullable|string',
+            'paid_to_landlord_directly' => 'nullable|boolean'
         ]);
 
         $tenant = Tenant::with('apartment')->findOrFail($data['tenant_id']);
@@ -128,11 +185,12 @@ private function processManualPayment($tenant, $apartment, $data)
 {
     $rent = $apartment->rent;
     $totalAmount = $data['amount'];
-    $paymentDate = $data['actual_payment_date'] 
-        ? Carbon::createFromFormat('Y-m-d', $data['actual_payment_date']) 
+    $paymentDate = $data['actual_payment_date']
+        ? Carbon::createFromFormat('Y-m-d', $data['actual_payment_date'])
         : now();
     $targetMonth = $data['month'];
     $startMonth = Carbon::createFromFormat('Y-m', $targetMonth);
+    $paidToLandlordDirectly = isset($data['paid_to_landlord_directly']) && $data['paid_to_landlord_directly'];
 
     // Log the input for debugging
     \Log::info('=== PAYMENT PROCESSING START ===');
@@ -172,11 +230,12 @@ private function processManualPayment($tenant, $apartment, $data)
             'paid_at' => $paymentDate,
             'actual_payment_date' => $data['actual_payment_date'] ?? $paymentDate->format('Y-m-d'),
             'processed_by' => auth()->id(),
-            'notes' => $fullMonths > 1 ? 
-                "Part of advance payment: UGX " . number_format($totalAmount) . " for " . $fullMonths . " months" : 
+            'notes' => $fullMonths > 1 ?
+                "Part of advance payment: UGX " . number_format($totalAmount) . " for " . $fullMonths . " months" :
                 ($data['notes'] ?? null),
             'is_advance_payment' => $fullMonths > 1,
-            'original_amount' => $fullMonths > 1 ? $totalAmount : null
+            'original_amount' => $fullMonths > 1 ? $totalAmount : null,
+            'paid_to_landlord_directly' => $paidToLandlordDirectly
         ]);
         
         $createdPayments[] = $payment;
@@ -201,7 +260,8 @@ private function processManualPayment($tenant, $apartment, $data)
             'actual_payment_date' => $data['actual_payment_date'] ?? $paymentDate->format('Y-m-d'),
             'processed_by' => auth()->id(),
             'notes' => "Partial payment from advance of UGX " . number_format($totalAmount),
-            'is_advance_payment' => false
+            'is_advance_payment' => false,
+            'paid_to_landlord_directly' => $paidToLandlordDirectly
         ]);
         
         $createdPayments[] = $partialPayment;

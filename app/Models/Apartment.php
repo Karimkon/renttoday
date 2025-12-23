@@ -49,28 +49,72 @@ class Apartment extends Model
     }
 
     /**
- * Get payments that were ACTUALLY made in a specific calendar month
- * (not allocated to that month, but physically received)
- * 
- * @param string $month Format: Y-m (e.g., '2025-01')
- * @return \Illuminate\Database\Eloquent\Collection
- */
-public function getPaymentsActuallyMadeInMonth($month)
-{
-    return $this->payments()
-        ->select('payments.*')
-        ->where('status', 'paid')
-        ->where(function($query) use ($month) {
-            $query->whereRaw("DATE_FORMAT(actual_payment_date, '%Y-%m') = ?", [$month])
-                  ->orWhere(function($q) use ($month) {
-                      $q->whereNull('actual_payment_date')
-                        ->whereRaw("DATE_FORMAT(paid_at, '%Y-%m') = ?", [$month]);
-                  });
-        })
-        ->get()
-        ->unique('id')
-        ->values(); // REMOVED the coversMonth filter!
-}
+     * Get payments that were ACTUALLY made in a specific calendar month
+     * (not allocated to that month, but physically received)
+     *
+     * IMPORTANT FIX: For advance payments that create multiple records (one per month),
+     * we only count the PRIMARY record (where the payment's month matches the query month).
+     * This prevents double-counting when a tenant pays multiple months at once.
+     *
+     * @param string $month Format: Y-m (e.g., '2025-01')
+     * @return \Illuminate\Database\Eloquent\Collection
+     */
+    public function getPaymentsActuallyMadeInMonth($month)
+    {
+        return $this->payments()
+            ->select('payments.*')
+            ->where('status', 'paid')
+            ->where(function($query) use ($month) {
+                $query->whereRaw("DATE_FORMAT(actual_payment_date, '%Y-%m') = ?", [$month])
+                      ->orWhere(function($q) use ($month) {
+                          $q->whereNull('actual_payment_date')
+                            ->whereRaw("DATE_FORMAT(paid_at, '%Y-%m') = ?", [$month]);
+                      });
+            })
+            ->get()
+            ->unique('id')
+            ->filter(function($payment) use ($month) {
+                // FIX: For advance payments (split into multiple records),
+                // only count the record where the month field matches the actual payment date month.
+                // This prevents counting December's split record when querying November payments.
+                if ($payment->is_advance_payment && $payment->original_amount) {
+                    $paymentDateMonth = $payment->actual_payment_date
+                        ? $payment->actual_payment_date->format('Y-m')
+                        : ($payment->paid_at ? $payment->paid_at->format('Y-m') : null);
+
+                    $paymentMonth = $payment->month->format('Y-m');
+
+                    // Only include this advance payment record if its month field
+                    // matches the month it was actually paid in
+                    return $paymentMonth === $paymentDateMonth;
+                }
+
+                // Regular payments are always included
+                return true;
+            })
+            ->values();
+    }
+
+    /**
+     * Get the total ORIGINAL amount of cash received in a specific month
+     * This accounts for advance payments correctly - counting the full original amount once
+     *
+     * @param string $month Format: Y-m (e.g., '2025-01')
+     * @return float
+     */
+    public function getTotalCashReceivedInMonth($month)
+    {
+        $payments = $this->getPaymentsActuallyMadeInMonth($month);
+
+        return $payments->sum(function($payment) {
+            // For advance payments, return the original amount (full cash received)
+            if ($payment->is_advance_payment && $payment->original_amount) {
+                return $payment->original_amount;
+            }
+            // For regular payments, return the amount
+            return $payment->amount;
+        });
+    }
 
     /**
      * NEW METHOD: Check if this month is covered by a PREVIOUS advance payment

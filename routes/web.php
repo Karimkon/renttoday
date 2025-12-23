@@ -149,6 +149,7 @@ Route::prefix('payments')->name('payments.')->group(function () {
     Route::delete('/{payment}', [AdminPaymentController::class, 'destroy'])->name('destroy');
     Route::post('/{payment}/mark-paid', [AdminPaymentController::class, 'markAsPaid'])->name('mark-paid');
     Route::get('/pesapal/callback', [AdminPaymentController::class, 'pesapalCallback'])->name('pesapal-callback');
+    Route::get('/payment-status', [AdminPaymentController::class, 'getPaymentStatus'])->name('payment-status');
      Route::get('{payment}/receipt', [AdminPaymentController::class, 'downloadReceipt'])
         ->name('receipt');
     
@@ -166,7 +167,8 @@ Route::prefix('payments')->name('payments.')->group(function () {
      Route::post('landlords/{landlord}/mark-paid', [LandlordController::class, 'markPaymentPaid'])
         ->name('landlords.mark-paid');
     Route::post('landlords/{landlord}/mark-unpaid', [LandlordController::class, 'markPaymentUnpaid'])
-        ->name('landlords.mark-unpaid');                                             
+        ->name('landlords.mark-unpaid');
+                                   
 
     
     // Financial Reports
@@ -200,6 +202,22 @@ Route::prefix('financial-reports')->name('financial-reports.')->group(function (
         Route::get('/bulk-sms/preview', [App\Http\Controllers\Admin\SmsController::class, 'previewMessage'])
             ->name('bulk-sms.preview');
     });
+
+    // ==============================================
+    // LANDLORD EXPENSE MANAGEMENT - MOVE THIS INSIDE
+    // ==============================================
+    Route::get('landlords/{landlord}/expenses', [LandlordController::class, 'indexExpenses'])
+        ->name('landlords.expenses.index');
+    Route::get('landlords/{landlord}/expenses/create', [LandlordController::class, 'createExpense'])
+        ->name('landlords.expenses.create');
+    Route::post('landlords/{landlord}/expenses', [LandlordController::class, 'storeExpense'])
+        ->name('landlords.expenses.store');
+    Route::get('landlords/{landlord}/expenses/{expense}/edit', [LandlordController::class, 'editExpense'])
+        ->name('landlords.expenses.edit');
+    Route::put('landlords/{landlord}/expenses/{expense}', [LandlordController::class, 'updateExpense'])
+        ->name('landlords.expenses.update');
+    Route::delete('landlords/{landlord}/expenses/{expense}', [LandlordController::class, 'destroyExpense'])
+        ->name('landlords.expenses.destroy');
 });
 
 

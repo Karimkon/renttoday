@@ -39,7 +39,7 @@
         <!-- Add this after the tenant select field -->
         <!-- Auto-filled Amount Section -->
         <div class="mb-3">
-            <label class="form-label fw-semibold">Suggested Rent Amount</label>
+            <label class="form-label fw-semibold">Suggested Amount</label>
             <div class="input-group">
                 <span class="input-group-text">UGX</span>
                 <input type="text" id="suggestedAmount" class="form-control" readonly>
@@ -48,6 +48,13 @@
                 </button>
             </div>
             <small class="text-muted">Based on apartment rent: <span id="rentDetails">Select a tenant</span></small>
+        </div>
+
+        <!-- Payment Status Alert -->
+        <div id="paymentStatusAlert" class="mb-3" style="display: none;">
+            <div class="alert mb-0" id="paymentStatusMessage">
+                <!-- Will be populated by JavaScript -->
+            </div>
         </div>
                             </div>
 
@@ -69,15 +76,54 @@
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label class="form-label fw-semibold">Month <span class="text-danger">*</span></label>
-                                    <input type="month" name="month" class="form-control" value="{{ old('month', date('Y-m')) }}" required>
+                                    <input type="month" name="month" id="monthInput" class="form-control" value="{{ old('month', date('Y-m')) }}" required>
                                 </div>
                             </div>
-                            
 
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label class="form-label fw-semibold">Amount (UGX) <span class="text-danger">*</span></label>
                                     <input type="number" name="amount" class="form-control" value="{{ old('amount') }}" required min="1">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Payment Allocation Options -->
+                        <div class="row">
+                            <div class="col-md-12">
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Payment Allocation</label>
+                                    <div class="card border">
+                                        <div class="card-body py-2">
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="radio" name="allocation_type" id="allocateCurrent" value="current" checked>
+                                                <label class="form-check-label" for="allocateCurrent">
+                                                    <i class="bi bi-calendar-check"></i> Current/Future Month
+                                                    <small class="text-muted d-block">Apply payment starting from selected month forward</small>
+                                                </label>
+                                            </div>
+                                            <div class="form-check form-check-inline ms-4">
+                                                <input class="form-check-input" type="radio" name="allocation_type" id="allocateArrears" value="arrears">
+                                                <label class="form-check-label" for="allocateArrears">
+                                                    <i class="bi bi-clock-history"></i> Arrears (Back Months)
+                                                    <small class="text-muted d-block">Apply payment to unpaid previous months first</small>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <small class="text-muted">Choose how to allocate this payment if it covers multiple months</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Arrears Selection (shown when arrears is selected) -->
+                        <div class="row" id="arrearsSection" style="display: none;">
+                            <div class="col-md-12">
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Select Arrears Month</label>
+                                    <input type="month" name="arrears_start_month" id="arrearsStartMonth" class="form-control"
+                                           max="{{ date('Y-m') }}">
+                                    <small class="text-muted">Payment will be allocated starting from this month forward</small>
                                 </div>
                             </div>
                         </div>
@@ -104,7 +150,7 @@
                             </div>
                         </div>
 
-                        <!-- Add this near the gym checkbox -->
+                        <!-- Payment Options -->
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="mb-3">
@@ -113,6 +159,19 @@
                                         <label class="form-check-label">
                                             <i class="bi bi-chat-text"></i> Send payment confirmation SMS
                                         </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input type="checkbox" name="paid_to_landlord_directly" value="1" class="form-check-input" id="paidToLandlord">
+                                        <label class="form-check-label" for="paidToLandlord">
+                                            <i class="bi bi-person-fill-check"></i> Paid Directly to Landlord
+                                        </label>
+                                        <small class="d-block text-muted">
+                                            Check if tenant paid landlord directly. Commission still applies.
+                                        </small>
                                     </div>
                                 </div>
                             </div>
@@ -157,16 +216,74 @@
                 const rent = selected.getAttribute('data-rent');
                 const apartment = selected.getAttribute('data-apartment');
                 const landlord = selected.getAttribute('data-landlord');
-                
+
                 if (rent && rent > 0) {
                     $('#suggestedAmount').val(Number(rent).toLocaleString());
                     $('#rentDetails').text(`Apartment ${apartment} (${landlord}) - UGX ${Number(rent).toLocaleString()}/month`);
+                    // Check payment status for selected month
+                    checkPaymentStatus();
                 } else {
                     $('#suggestedAmount').val('');
                     $('#rentDetails').text('No apartment assigned or rent not set');
+                    $('#paymentStatusAlert').hide();
                 }
             });
+
+            // Also check when month changes
+            $('input[name="month"]').on('change', function() {
+                checkPaymentStatus();
+            });
         });
+
+        // Check payment status for tenant/month combination
+        function checkPaymentStatus() {
+            const tenantId = $('#tenantSelect').val();
+            const month = $('input[name="month"]').val();
+
+            if (!tenantId || !month) {
+                $('#paymentStatusAlert').hide();
+                return;
+            }
+
+            $.ajax({
+                url: '{{ route("admin.payments.payment-status") }}',
+                method: 'GET',
+                data: {
+                    tenant_id: tenantId,
+                    month: month
+                },
+                success: function(response) {
+                    if (response.success) {
+                        const data = response.data;
+                        const alertDiv = $('#paymentStatusAlert');
+                        const messageDiv = $('#paymentStatusMessage');
+
+                        // Update suggested amount to remaining balance
+                        $('#suggestedAmount').val(Number(data.suggested_amount).toLocaleString());
+
+                        // Show status message
+                        alertDiv.show();
+                        if (data.is_fully_paid) {
+                            messageDiv.removeClass('alert-warning alert-info').addClass('alert-success');
+                            messageDiv.html('<i class="bi bi-check-circle-fill"></i> <strong>Fully Paid!</strong> ' + data.message +
+                                '<br><small class="text-muted">Adding more will count as advance payment for future months.</small>');
+                        } else if (data.total_paid > 0) {
+                            messageDiv.removeClass('alert-success alert-info').addClass('alert-warning');
+                            messageDiv.html('<i class="bi bi-exclamation-triangle-fill"></i> <strong>Partial Payment Exists!</strong><br>' +
+                                data.message +
+                                '<br><small>Monthly rent: UGX ' + Number(data.monthly_rent).toLocaleString() + '</small>');
+                        } else {
+                            messageDiv.removeClass('alert-success alert-warning').addClass('alert-info');
+                            messageDiv.html('<i class="bi bi-info-circle-fill"></i> ' + data.message +
+                                '<br><small>Monthly rent: UGX ' + Number(data.monthly_rent).toLocaleString() + '</small>');
+                        }
+                    }
+                },
+                error: function() {
+                    $('#paymentStatusAlert').hide();
+                }
+            });
+        }
 
         function useSuggestedAmount() {
             const suggested = $('#suggestedAmount').val().replace(/,/g, '');
@@ -185,6 +302,28 @@
             }
         });
         document.getElementById('paymentMethod').dispatchEvent(new Event('change'));
+
+        // Handle allocation type toggle
+        $('input[name="allocation_type"]').on('change', function() {
+            if ($(this).val() === 'arrears') {
+                $('#arrearsSection').slideDown();
+                // When switching to arrears, update the main month field behavior
+                $('#monthInput').prop('required', false);
+                $('#arrearsStartMonth').prop('required', true);
+            } else {
+                $('#arrearsSection').slideUp();
+                $('#monthInput').prop('required', true);
+                $('#arrearsStartMonth').prop('required', false);
+            }
+        });
+
+        // When arrears month is selected, update the month field
+        $('#arrearsStartMonth').on('change', function() {
+            if ($('#allocateArrears').is(':checked')) {
+                $('#monthInput').val($(this).val());
+                checkPaymentStatus();
+            }
+        });
         </script>
         @endpush
         @endsection
