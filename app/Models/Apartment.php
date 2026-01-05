@@ -282,22 +282,133 @@ class Apartment extends Model
         return $this->rent;
     }
 
-    // In Apartment model
-public function getPaymentsCoveringMonth($month)
-{
-    return $this->payments()
-        ->where('status', 'paid')
-        ->get()
-        ->filter(function($payment) use ($month) {
-            return $payment->coversMonth($month);
-        });
-}
+    public function getPaymentsCoveringMonth($month)
+    {
+        return $this->payments()
+            ->where('status', 'paid')
+            ->get()
+            ->filter(function($payment) use ($month) {
+                return $payment->coversMonth($month);
+            });
+    }
 
-public function getTotalAmountCoveringMonth($month)
-{
-    $payments = $this->getPaymentsCoveringMonth($month);
-    return $payments->sum(function($payment) use ($month) {
-        return $payment->getAmountForMonth($month);
-    });
-}
+    public function getTotalAmountCoveringMonth($month)
+    {
+        $payments = $this->getPaymentsCoveringMonth($month);
+        return $payments->sum(function($payment) use ($month) {
+            return $payment->getAmountForMonth($month);
+        });
+    }
+
+    /**
+     * Get all data needed for a report row for a specific month.
+     * Centralizing this logic ensures consistency between web view and PDF.
+     */
+    public function getReportRowData($month)
+    {
+        $monthCarbon = \Carbon\Carbon::parse($month);
+        $monthFormatted = $monthCarbon->format('Y-m');
+
+        // 1. Get payments ACTUALLY MADE this month (cash inflow)
+        $paymentsActuallyMade = $this->getPaymentsActuallyMadeInMonth($monthFormatted);
+        
+        // 2. Calculate Rent Collected (Agency) vs Direct to Landlord vs Commissionable
+        $rentCollectedByAgency = 0;
+        $rentPaidDirectlyToLandlord = 0;
+        $commissionableAmount = 0;
+
+        foreach ($paymentsActuallyMade as $payment) {
+            $amount = ($payment->is_advance_payment && $payment->original_amount) 
+                ? $payment->original_amount 
+                : $payment->amount;
+            
+            if ($payment->paid_to_landlord_directly) {
+                $rentPaidDirectlyToLandlord += $amount;
+            } else {
+                $rentCollectedByAgency += $amount;
+            }
+            
+            $commissionableAmount += $amount;
+        }
+
+        // 3. Check for previous advance coverage (no new money this month)
+        $isCoveredByAdvance = false;
+        $coveringAdvance = null;
+        if ($commissionableAmount == 0) {
+            $coveringAdvance = $this->getCoveringAdvancePayment($monthFormatted);
+            if ($coveringAdvance) {
+                $isCoveredByAdvance = true;
+            }
+        }
+
+        // 4. Status and Date
+        $status = 'UNPAID';
+        $paymentDate = '-';
+        $nextPayment = '-';
+        
+        if (!$this->tenant) {
+            $status = 'VACANT';
+        } elseif ($commissionableAmount > 0) {
+            $status = 'PAID';
+            $payment = $paymentsActuallyMade->first();
+            $paymentDate = ($payment->actual_payment_date ?: $payment->paid_at)->format('jS/m/Y');
+            
+            $isAdvance = false;
+            $adv = null;
+            foreach($paymentsActuallyMade as $p) {
+                if ($p->is_advance_payment) {
+                    $isAdvance = true;
+                    $adv = $p;
+                    break;
+                }
+            }
+
+            if ($isAdvance && $adv) {
+                $count = count($adv->allocated_months ?? []);
+                if ($count > 1) {
+                    $status = $count . ' MONTHS ADVANCE PAID';
+                }
+                if ($adv->allocated_months) {
+                    $last = \Carbon\Carbon::createFromFormat('Y-m', collect($adv->allocated_months)->sort()->last());
+                    $nextPayment = $last->copy()->addMonth()->format('F Y');
+                } else {
+                    $nextPayment = $monthCarbon->copy()->addMonths($count ?: 1)->format('F Y');
+                }
+            } else {
+                $nextPayment = $monthCarbon->copy()->addMonth()->format('F Y');
+            }
+        } elseif ($isCoveredByAdvance) {
+            $status = 'ADVANCE COVER';
+            $paymentDate = 'Paid: ' . ($coveringAdvance->actual_payment_date ?: $coveringAdvance->paid_at)->format('jS/m/Y');
+            $nextPayment = $monthCarbon->copy()->addMonth()->format('F Y'); 
+            if ($coveringAdvance->allocated_months) {
+                $last = \Carbon\Carbon::createFromFormat('Y-m', collect($coveringAdvance->allocated_months)->sort()->last());
+                $nextPayment = $last->copy()->addMonth()->format('F Y');
+            }
+        } else {
+            // Check if any payment covers it (partial etc)
+            $coveringTotal = $this->getTotalAmountCoveringMonth($monthFormatted);
+            if ($coveringTotal > 0) {
+                if ($coveringTotal >= $this->rent) {
+                    $status = 'PAID';
+                } else {
+                    $status = 'PARTIAL';
+                }
+                $nextPayment = $monthCarbon->copy()->addMonth()->format('F Y');
+            }
+        }
+
+        return [
+            'apartment' => $this,
+            'rent_collected_agency' => $rentCollectedByAgency,
+            'rent_paid_direct' => $rentPaidDirectlyToLandlord,
+            'commissionable_amount' => $commissionableAmount,
+            'is_covered_by_advance' => $isCoveredByAdvance,
+            'status_label' => $status,
+            'payment_date' => $paymentDate,
+            'next_payment' => $nextPayment,
+            'covering_advance' => $coveringAdvance,
+            'paid_directly' => $rentPaidDirectlyToLandlord > 0 && $rentCollectedByAgency == 0
+        ];
+    }
 }
