@@ -64,7 +64,7 @@ class LandlordController extends Controller
     {
         $month = $month ?? now()->format('Y-m');
         $reportData = $this->prepareReportData($landlord, $month);
-        $locations = $landlord->apartments()->distinct()->pluck('location');
+        $locations = $reportData['apartments']->pluck('location')->unique()->values();
 
         return view('admin.landlords.report', compact('reportData', 'locations'));
     }
@@ -105,7 +105,7 @@ class LandlordController extends Controller
         try {
             $month = $month ?? now()->format('Y-m');
             $reportData = $this->prepareReportData($landlord, $month);
-            $locations = $landlord->apartments()->distinct()->pluck('location');
+            $locations = $reportData['apartments']->pluck('location')->unique()->values();
 
             // SHARED HOSTING FIX: Configure DomPDF for shared hosting
             $pdf = PDF::loadView('admin.landlords.report-pdf', compact('reportData', 'locations'));
@@ -176,6 +176,11 @@ class LandlordController extends Controller
         $monthCarbon = Carbon::createFromFormat('Y-m', $month);
         $apartments = $landlord->apartments()->with(['tenant', 'payments'])->get();
 
+        // Normalize locations for consistent grouping (prevents "MUKONO" vs "Mukono" split)
+        foreach ($apartments as $apartment) {
+            $apartment->location = ucwords(strtolower(trim($apartment->location)));
+        }
+
         $totalCollectedRent = 0; 
         $totalCommissionRent = 0; 
         $totalDisplayRent = 0; 
@@ -224,7 +229,7 @@ class LandlordController extends Controller
     {
         try {
             $reportData = $this->prepareReportData($landlord, $month);
-            $locations = $landlord->apartments()->distinct()->pluck('location');
+            $locations = $reportData['apartments']->pluck('location')->unique()->values();
 
             return view('admin.landlords.report-pdf', compact('reportData', 'locations'))
                 ->with('isHtmlFallback', true);

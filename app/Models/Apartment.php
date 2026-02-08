@@ -20,6 +20,17 @@ class Apartment extends Model
         'status'
     ];
 
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::saving(function ($apartment) {
+            if ($apartment->location) {
+                $apartment->location = ucwords(strtolower(trim($apartment->location)));
+            }
+        });
+    }
+
     public function tenant()
     {
         return $this->belongsTo(Tenant::class);
