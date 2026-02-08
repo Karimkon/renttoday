@@ -75,21 +75,31 @@ class Apartment extends Model
             ->unique('id')
             ->filter(function($payment) use ($month) {
                 // FIX: For advance payments (split into multiple records),
-                // only count the record where the month field matches the actual payment date month.
-                // This prevents counting December's split record when querying November payments.
-                if ($payment->is_advance_payment && $payment->original_amount) {
+                // we need to identify which is the PRIMARY record (the one representing actual cash inflow)
+
+                if ($payment->is_advance_payment) {
                     $paymentDateMonth = $payment->actual_payment_date
                         ? $payment->actual_payment_date->format('Y-m')
                         : ($payment->paid_at ? $payment->paid_at->format('Y-m') : null);
 
                     $paymentMonth = $payment->month->format('Y-m');
 
-                    // Only include this advance payment record if its month field
-                    // matches the month it was actually paid in
-                    return $paymentMonth === $paymentDateMonth;
+                    // Case 1: This is the PRIMARY record (has original_amount set)
+                    // Include only if month field matches actual payment date month
+                    if ($payment->original_amount) {
+                        return $paymentMonth === $paymentDateMonth;
+                    }
+
+                    // Case 2: This is a SECONDARY record (advance payment without original_amount)
+                    // These represent future months covered by an advance - exclude from "actually made" list
+                    // because no new cash was received for this specific record
+                    // EXCEPTION: If month matches payment date month, it might be an old record format
+                    if ($paymentMonth !== $paymentDateMonth) {
+                        return false; // Exclude secondary records for future months
+                    }
                 }
 
-                // Regular payments are always included
+                // Regular payments and properly matching advance payments are included
                 return true;
             })
             ->values();
@@ -143,14 +153,21 @@ class Apartment extends Model
     /**
      * UPDATED: Get payment status for reports
      * Now includes information about whether money was actually paid this month
+     * FIX: Also checks if tenant existed during the report month
      */
     public function getPaymentStatusForReport($month)
     {
+        $monthCarbon = Carbon::createFromFormat('Y-m', $month);
+        $monthFormatted = $monthCarbon->format('Y-m');
+        $monthEnd = $monthCarbon->copy()->endOfMonth();
+
+        // Check if apartment has no tenant OR if tenant was created AFTER this month
+        // This ensures past months show VACANT for new tenants
         if (!$this->tenant) {
             return [
                 'status' => 'VACANT',
                 'amount_paid' => 0,
-                'actual_amount_this_month' => 0, // NEW: Actual cash received this month
+                'actual_amount_this_month' => 0,
                 'is_advance' => false,
                 'months_covered' => 0,
                 'payment_made_this_month' => false,
@@ -158,12 +175,37 @@ class Apartment extends Model
                 'advance_balance' => 0,
                 'remaining_advance' => 0,
                 'is_covered' => false,
-                'covered_by_previous_advance' => false // NEW
+                'covered_by_previous_advance' => false
             ];
         }
 
-        $monthCarbon = Carbon::createFromFormat('Y-m', $month);
-        $monthFormatted = $monthCarbon->format('Y-m');
+        // FIX: Check if tenant was assigned AFTER this report month
+        // If tenant's first payment or creation date is after this month, consider it vacant
+        $tenantFirstPayment = $this->payments()
+            ->where('status', 'paid')
+            ->where('tenant_id', $this->tenant_id)
+            ->orderBy('month', 'asc')
+            ->first();
+
+        $tenantStartDate = $tenantFirstPayment
+            ? Carbon::parse($tenantFirstPayment->month)->startOfMonth()
+            : ($this->tenant->created_at ?? now());
+
+        if ($tenantStartDate->startOfMonth() > $monthEnd) {
+            return [
+                'status' => 'VACANT',
+                'amount_paid' => 0,
+                'actual_amount_this_month' => 0,
+                'is_advance' => false,
+                'months_covered' => 0,
+                'payment_made_this_month' => false,
+                'is_partial' => false,
+                'advance_balance' => 0,
+                'remaining_advance' => 0,
+                'is_covered' => false,
+                'covered_by_previous_advance' => false
+            ];
+        }
         
         // Get payments ACTUALLY made this month (for commission)
         $paymentsActuallyMadeThisMonth = $this->getPaymentsActuallyMadeInMonth($monthFormatted);
@@ -213,12 +255,13 @@ class Apartment extends Model
         $rent = $this->rent;
         $status = 'UNPAID';
         $isPartial = false;
-        
+
         if ($isCovered) {
             if ($amountForThisMonth >= $rent) {
                 $status = 'PAID';
             } elseif ($amountForThisMonth > 0) {
-                $status = 'PAID';
+                // FIX: Show PARTIAL status when amount is less than full rent
+                $status = 'PARTIAL';
                 $isPartial = true;
             }
         }
@@ -303,31 +346,62 @@ class Apartment extends Model
     /**
      * Get all data needed for a report row for a specific month.
      * Centralizing this logic ensures consistency between web view and PDF.
+     * FIX: Added vacant check for tenants who joined after this month
+     * FIX: Added partial status check when commissionable amount < rent
      */
     public function getReportRowData($month)
     {
         $monthCarbon = \Carbon\Carbon::parse($month);
         $monthFormatted = $monthCarbon->format('Y-m');
+        $monthEnd = $monthCarbon->copy()->endOfMonth();
+
+        // FIX: Check if apartment was vacant during this month
+        // Either no tenant now, or tenant joined after this month
+        $isVacantForMonth = false;
+        if (!$this->tenant) {
+            $isVacantForMonth = true;
+        } else {
+            // Check when tenant started (based on first payment or creation date)
+            $tenantFirstPayment = $this->payments()
+                ->where('status', 'paid')
+                ->where('tenant_id', $this->tenant_id)
+                ->orderBy('month', 'asc')
+                ->first();
+
+            $tenantStartDate = $tenantFirstPayment
+                ? \Carbon\Carbon::parse($tenantFirstPayment->month)->startOfMonth()
+                : ($this->tenant->created_at ?? now());
+
+            if ($tenantStartDate->startOfMonth() > $monthEnd) {
+                $isVacantForMonth = true;
+            }
+        }
 
         // 1. Get payments ACTUALLY MADE this month (cash inflow)
         $paymentsActuallyMade = $this->getPaymentsActuallyMadeInMonth($monthFormatted);
-        
+
         // 2. Calculate Rent Collected (Agency) vs Direct to Landlord vs Commissionable
+        // FIX: For advance payments, only count original_amount for the PRIMARY record
+        // (the one where payment month matches actual payment date month)
         $rentCollectedByAgency = 0;
         $rentPaidDirectlyToLandlord = 0;
         $commissionableAmount = 0;
 
         foreach ($paymentsActuallyMade as $payment) {
-            $amount = ($payment->is_advance_payment && $payment->original_amount) 
-                ? $payment->original_amount 
-                : $payment->amount;
-            
+            // FIX: Use original_amount only for the primary advance payment record
+            // This prevents double-counting when advance payments create multiple records
+            $amount = $payment->amount;
+            if ($payment->is_advance_payment && $payment->original_amount) {
+                // This is the primary record (already filtered by getPaymentsActuallyMadeInMonth)
+                $amount = $payment->original_amount;
+            }
+
             if ($payment->paid_to_landlord_directly) {
                 $rentPaidDirectlyToLandlord += $amount;
             } else {
                 $rentCollectedByAgency += $amount;
             }
-            
+
             $commissionableAmount += $amount;
         }
 
@@ -345,11 +419,18 @@ class Apartment extends Model
         $status = 'UNPAID';
         $paymentDate = '-';
         $nextPayment = '-';
-        
-        if (!$this->tenant) {
+
+        // FIX: Check for vacancy FIRST using our calculated flag
+        if ($isVacantForMonth) {
             $status = 'VACANT';
         } elseif ($commissionableAmount > 0) {
-            $status = 'PAID';
+            // FIX: Check if this is a partial payment (amount < rent for this month)
+            $amountCoveringThisMonth = $this->getTotalAmountCoveringMonth($monthFormatted);
+            if ($amountCoveringThisMonth < $this->rent) {
+                $status = 'PARTIAL';
+            } else {
+                $status = 'PAID';
+            }
             $payment = $paymentsActuallyMade->first();
             $paymentDate = ($payment->actual_payment_date ?: $payment->paid_at)->format('jS/m/Y');
             

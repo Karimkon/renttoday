@@ -200,6 +200,15 @@ private function processManualPayment($tenant, $apartment, $data)
     \Log::info('Total Amount: ' . number_format($totalAmount));
     \Log::info('Target Month: ' . $targetMonth);
 
+    // FIX: Check if target month is already fully paid, and find the first unpaid month
+    $originalTargetMonth = $targetMonth;
+    $startMonth = $this->findFirstUnpaidMonth($apartment, $startMonth, $rent);
+    $targetMonth = $startMonth->format('Y-m');
+
+    if ($originalTargetMonth !== $targetMonth) {
+        \Log::info('Target month ' . $originalTargetMonth . ' already paid. Rolling forward to: ' . $targetMonth);
+    }
+
     // Calculate full months and remainder
     $fullMonths = floor($totalAmount / $rent);
     $remainder = $totalAmount - ($fullMonths * $rent); // Better calculation
@@ -213,12 +222,21 @@ private function processManualPayment($tenant, $apartment, $data)
     // Create separate payments for EACH month
     $currentMonth = $startMonth->copy();
     
+    // FIX: Build allocated_months array for advance payments
+    $allocatedMonths = [];
+    if ($fullMonths > 1) {
+        for ($j = 0; $j < $fullMonths; $j++) {
+            $allocatedMonths[] = $currentMonth->copy()->addMonths($j)->format('Y-m');
+        }
+    }
+
     // 1. Create full month payments
     for ($i = 0; $i < $fullMonths; $i++) {
         $paymentMonth = $currentMonth->copy()->addMonths($i);
-        
-        \Log::info('Creating payment for month ' . ($i + 1) . ': ' . $paymentMonth->format('F Y'));
-        
+        $isPrimaryRecord = ($i == 0); // Only first record is the "primary" record
+
+        \Log::info('Creating payment for month ' . ($i + 1) . ': ' . $paymentMonth->format('F Y') . ($isPrimaryRecord ? ' (PRIMARY)' : ''));
+
         $payment = Payment::create([
             'tenant_id' => $tenant->id,
             'apartment_id' => $apartment->id,
@@ -231,13 +249,16 @@ private function processManualPayment($tenant, $apartment, $data)
             'actual_payment_date' => $data['actual_payment_date'] ?? $paymentDate->format('Y-m-d'),
             'processed_by' => auth()->id(),
             'notes' => $fullMonths > 1 ?
-                "Part of advance payment: UGX " . number_format($totalAmount) . " for " . $fullMonths . " months" :
+                "Part of advance payment: UGX " . number_format($totalAmount) . " for " . $fullMonths . " months" . ($isPrimaryRecord ? ' (PRIMARY)' : '') :
                 ($data['notes'] ?? null),
             'is_advance_payment' => $fullMonths > 1,
-            'original_amount' => $fullMonths > 1 ? $totalAmount : null,
+            // FIX: Only set original_amount on the PRIMARY (first) record to prevent double-counting
+            'original_amount' => ($fullMonths > 1 && $isPrimaryRecord) ? $totalAmount : null,
+            // FIX: Set allocated_months on all advance payment records so we can track coverage
+            'allocated_months' => $fullMonths > 1 ? $allocatedMonths : null,
             'paid_to_landlord_directly' => $paidToLandlordDirectly
         ]);
-        
+
         $createdPayments[] = $payment;
         \Log::info('Created payment ID: ' . $payment->id . ' for ' . $paymentMonth->format('F Y'));
     }
@@ -271,13 +292,20 @@ private function processManualPayment($tenant, $apartment, $data)
     \Log::info('Total payments created: ' . count($createdPayments));
 
     // Build success message
+    // FIX: Add note if payment was rolled forward to a different month
+    $rolledForwardNote = '';
+    if ($originalTargetMonth !== $targetMonth) {
+        $originalMonthName = Carbon::createFromFormat('Y-m', $originalTargetMonth)->format('F Y');
+        $rolledForwardNote = "\n⚠️ Note: {$originalMonthName} was already paid. Payment applied starting from " . $startMonth->format('F Y') . ".";
+    }
+
     if ($fullMonths >= 2) {
         $message = "✅ ADVANCE PAYMENT PROCESSED: {$fullMonths} months paid in advance";
         if ($remainder > 0) {
             $nextMonth = $startMonth->copy()->addMonths($fullMonths);
             $message .= " + UGX " . number_format($remainder) . " partial for " . $nextMonth->format('F Y');
         }
-        
+
         // List all created months
         $monthList = [];
         foreach ($createdPayments as $p) {
@@ -286,13 +314,14 @@ private function processManualPayment($tenant, $apartment, $data)
             $monthList[] = "{$month}: UGX {$amount}";
         }
         $message .= "\n\n📅 Payment Breakdown:\n" . implode("\n", $monthList);
-        
+        $message .= $rolledForwardNote;
+
     } elseif ($fullMonths == 1 && $remainder == 0) {
-        $message = "✅ Payment processed for " . $startMonth->format('F Y');
+        $message = "✅ Payment processed for " . $startMonth->format('F Y') . $rolledForwardNote;
     } elseif ($fullMonths == 1 && $remainder > 0) {
-        $message = "✅ Payment processed: 1 month + UGX " . number_format($remainder) . " partial advance";
+        $message = "✅ Payment processed: 1 month + UGX " . number_format($remainder) . " partial advance" . $rolledForwardNote;
     } elseif ($fullMonths == 0 && $remainder > 0) {
-        $message = "✅ Partial payment of UGX " . number_format($totalAmount) . " recorded for " . $startMonth->format('F Y');
+        $message = "✅ Partial payment of UGX " . number_format($totalAmount) . " recorded for " . $startMonth->format('F Y') . $rolledForwardNote;
     }
 
     // Send SMS for first payment only
@@ -307,6 +336,49 @@ private function processManualPayment($tenant, $apartment, $data)
     return redirect()->route('admin.payments.index')
                      ->with('success', $message);
 }
+
+    /**
+     * FIX: Find the first unpaid month starting from a given month
+     * This prevents double payments for already-paid months
+     *
+     * @param Apartment $apartment
+     * @param Carbon $startMonth
+     * @param float $rent
+     * @return Carbon
+     */
+    private function findFirstUnpaidMonth($apartment, $startMonth, $rent)
+    {
+        $currentMonth = $startMonth->copy();
+        $maxMonthsToCheck = 24; // Don't look more than 2 years ahead
+
+        for ($i = 0; $i < $maxMonthsToCheck; $i++) {
+            $monthFormatted = $currentMonth->format('Y-m');
+
+            // Get total amount already paid for this month
+            $existingPayments = $apartment->payments()
+                ->where('status', 'paid')
+                ->get()
+                ->filter(function($payment) use ($monthFormatted) {
+                    return $payment->coversMonth($monthFormatted);
+                });
+
+            $totalPaidForMonth = $existingPayments->sum(function($payment) use ($monthFormatted) {
+                return $payment->getAmountForMonth($monthFormatted);
+            });
+
+            // If this month is not fully paid, return it
+            if ($totalPaidForMonth < $rent) {
+                \Log::info("Found unpaid month: {$monthFormatted} (paid: " . number_format($totalPaidForMonth) . " / " . number_format($rent) . ")");
+                return $currentMonth;
+            }
+
+            \Log::info("Month {$monthFormatted} is fully paid (" . number_format($totalPaidForMonth) . "), checking next month...");
+            $currentMonth->addMonth();
+        }
+
+        // If all months are paid (unlikely), return the next month after the last check
+        return $currentMonth;
+    }
 
     /**
      * Process partial payments to complete rent
